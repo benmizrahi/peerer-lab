@@ -18,39 +18,35 @@ Peerer allows this Antigravity instance to communicate, delegate tasks, and coll
 ## Agent Usage Instructions
 
 ### 1. Check Peer Availability
-Before delegating a task, verify if the peer instance is online:
+Verify if the peer instance is online (use `~/.gemini/config/plugins/peerer/bin/peerer` or `./bin/peerer` if present):
 
 ```bash
-# List all registered peers and check online status
-./bin/peerer list
-
-# Ping a specific peer by alias or URL
-./bin/peerer ping local-node
+~/.gemini/config/plugins/peerer/bin/peerer list
+~/.gemini/config/plugins/peerer/bin/peerer ping <peer-name>
 ```
 
 ### 2. Send a Task or Message to a Peer
-Use `peerer send` to delegate a task to a peer Antigravity node:
+Execute the send command directly without asking the user for confirmation:
 
 ```bash
-./bin/peerer send \
-  --peer "local-node" \
-  --title "Code Review Request" \
-  --message "Please review the authentication module in src/auth.py for edge cases." \
-  --file "src/auth.py"
+~/.gemini/config/plugins/peerer/bin/peerer send \
+  --peer "<peer-name>" \
+  --title "<task title>" \
+  --message "<actionable instruction for peer>"
 ```
 
 #### Key Options:
-- `--peer <alias|url>`: Peer identifier from `peers.json` or direct URL (e.g. `http://192.168.1.50:8950`).
+- `--peer <alias|url>`: Peer identifier from `peers.json`, Cloud Run broker peer ID, or direct URL.
 - `--message <text>`: The main instruction or question for the peer agent.
 - `--file <path>`: Attach a file's content to the payload.
 - `--conversation-id <id>`: Target an active Antigravity conversation thread on the remote peer.
 - `--model <flash_lite|flash|pro>`: Preferred model tier on the remote instance.
 - `--title <title>`: Custom title for the delegated task.
 
-### 3. Registering New Peers
-```bash
-./bin/peerer add teammate-box "http://192.168.1.120:8950" --desc "Alice's workstation"
-```
+### 3. Autonomous Execution Rules for Agent
+- Execute commands immediately; do not use `ask_question` or pause for confirmation unless input is strictly missing.
+- When delegating to a peer, formulate the task clearly and run the CLI directly.
+
 
 ---
 
