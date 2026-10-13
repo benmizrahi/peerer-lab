@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""
+Peerer CLI - Peer-to-Peer Communication for Antigravity Instances
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / "skills" / "peerer" / "scripts"))
+sys.path.insert(0, str(PROJECT_ROOT / "sidecars" / "peerer"))
+
+import peers
+import send
+import daemon
+
+def cmd_send(args):
+    result = send.send_message(
+        peer=args.peer,
+        message=args.message,
+        title=args.title,
+        conversation_id=args.conversation_id,
+        model=args.model,
+        sender=args.sender,
+        file=args.file,
+        token=args.token,
+        timeout=args.timeout
+    )
+    print(json.dumps(result, indent=2))
+    if result.get("status") != "success":
+        sys.exit(1)
+
+def cmd_daemon(args):
+    if args.host:
+        daemon.CONFIG["host"] = args.host
+    if args.port:
+        daemon.CONFIG["port"] = args.port
+    daemon.main()
+
+def cmd_inbox(args):
+    import urllib.request
+    url, token = send.resolve_peer_endpoint(args.peer or "local-node")
+    token = args.token or os.getenv("PEER_AUTH_TOKEN") or token or "antigravity-peer-secret-token"
+    target = f"{url}/api/v1/inbox"
+    req = urllib.request.Request(target, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            print(json.dumps(data, indent=2))
+    except Exception as e:
+        print(f"Error fetching inbox: {e}", file=sys.stderr)
+        sys.exit(1)
+
+def cmd_health(args):
+    import urllib.request
+    url, _ = send.resolve_peer_endpoint(args.peer or "local-node")
+    target = f"{url}/health"
+    try:
+        with urllib.request.urlopen(target, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            print(json.dumps(data, indent=2))
+    except Exception as e:
+        print(f"Error checking health: {e}", file=sys.stderr)
+        sys.exit(1)
+
+def main():
+    parser = argparse.ArgumentParser(prog="peerer", description="Antigravity Peer Communication Tool (Peerer)")
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    # 1. ping
+    p_ping = subparsers.add_parser("ping", help="Ping a peer instance")
+    p_ping.add_argument("target", help="Peer name or URL")
+    p_ping.set_defaults(func=peers.cmd_ping)
+
+    # 2. list
+    p_list = subparsers.add_parser("list", help="List all registered peers and check availability")
+    p_list.set_defaults(func=peers.cmd_list)
+
+    # 3. add
+    p_add = subparsers.add_parser("add", help="Add a new peer")
+    p_add.add_argument("name", help="Peer identifier name")
+    p_add.add_argument("url", help="Base URL of peer (e.g. http://192.168.1.50:8950)")
+    p_add.add_argument("--token", help="Bearer authentication token")
+    p_add.add_argument("--desc", help="Description")
+    p_add.set_defaults(func=peers.cmd_add)
+
+    # 4. remove
+    p_rm = subparsers.add_parser("remove", help="Remove a peer")
+    p_rm.add_argument("name", help="Peer identifier name")
+    p_rm.set_defaults(func=peers.cmd_remove)
+
+    # 5. send
+    p_send = subparsers.add_parser("send", help="Send a task or message to a peer")
+    p_send.add_argument("--peer", required=True, help="Peer name or URL")
+    p_send.add_argument("--message", "-m", required=True, help="Message content or task instruction")
+    p_send.add_argument("--title", "-t", help="Title for the task or message")
+    p_send.add_argument("--conversation-id", "-c", help="Target existing remote conversation ID")
+    p_send.add_argument("--model", choices=["flash_lite", "flash", "pro"], help="Preferred model tier")
+    p_send.add_argument("--file", "-f", help="Attach a file's content")
+    p_send.add_argument("--sender", default="peerer-cli", help="Sender identifier")
+    p_send.add_argument("--token", help="Bearer auth token override")
+    p_send.add_argument("--timeout", type=int, default=15, help="Request timeout in seconds")
+    p_send.set_defaults(func=cmd_send)
+
+    # 6. daemon
+    p_daemon = subparsers.add_parser("daemon", help="Run the Peerer background listener daemon")
+    p_daemon.add_argument("--host", help="Host to bind (default: 127.0.0.1)")
+    p_daemon.add_argument("--port", type=int, help="Port to bind (default: 8950)")
+    p_daemon.set_defaults(func=cmd_daemon)
+
+    # 7. inbox
+    p_inbox = subparsers.add_parser("inbox", help="View recent incoming messages in inbox")
+    p_inbox.add_argument("--peer", help="Peer name or URL (default: local-node)")
+    p_inbox.add_argument("--token", help="Bearer auth token override")
+    p_inbox.set_defaults(func=cmd_inbox)
+
+    # 8. health
+    p_health = subparsers.add_parser("health", help="Check local or peer daemon health")
+    p_health.add_argument("--peer", help="Peer name or URL (default: local-node)")
+    p_health.set_defaults(func=cmd_health)
+
+    args = parser.parse_args()
+    args.func(args)
+
+if __name__ == "__main__":
+    main()

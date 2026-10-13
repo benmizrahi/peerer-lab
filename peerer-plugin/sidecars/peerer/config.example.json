@@ -1,0 +1,9 @@
+{
+  "instance_name": "peerer-local",
+  "host": "127.0.0.1",
+  "port": 8950,
+  "auth_token": "YOUR_PEER_AUTH_TOKEN",
+  "inbox_limit": 50,
+  "broker_url": "https://YOUR_BROKER_URL.a.run.app",
+  "broker_token": "YOUR_BROKER_SECRET_TOKEN"
+}

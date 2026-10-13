@@ -1,0 +1,9 @@
+{
+  "peers": {
+    "local-node": {
+      "url": "http://127.0.0.1:8950",
+      "token": "antigravity-peer-secret-token",
+      "description": "Local Antigravity Instance"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "description": "Always-on Peerer daemon bridging incoming messages from peer Antigravity instances into conversations via agentapi",
+  "command": "python3",
+  "args": [
+    "daemon.py"
+  ],
+  "restart_policy": "always",
+  "has_web_ui": false,
+  "display_name": "Peerer Daemon"
+}
