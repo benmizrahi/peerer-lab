@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import socketserver
+import ssl
 import subprocess
 import sys
 import threading
@@ -26,6 +27,21 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Deque, Dict, Optional
+
+def get_ssl_context() -> ssl.SSLContext:
+    """Returns an SSL context supporting certifi, default CA store, or insecure override."""
+    if os.getenv("PEER_INSECURE_SSL") == "1":
+        return ssl._create_unverified_context()
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -200,7 +216,7 @@ class BrokerSyncWorker(threading.Thread):
         }
         req = urllib.request.Request(url, data=req_data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as resp:
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw)
         except urllib.error.HTTPError as e:

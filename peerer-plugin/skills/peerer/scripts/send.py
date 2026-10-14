@@ -9,11 +9,27 @@ Supports direct P2P delivery or Cloud Run Broker queuing.
 import argparse
 import json
 import os
+import ssl
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+
+def get_ssl_context() -> ssl.SSLContext:
+    """Returns an SSL context supporting certifi, default CA store, or insecure override."""
+    if os.getenv("PEER_INSECURE_SSL") == "1":
+        return ssl._create_unverified_context()
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
+
 
 REGISTRY_PATH = Path(__file__).parent / "peers.json"
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "sidecars" / "peerer" / "config.json"
@@ -127,7 +143,7 @@ def send_message(
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as resp:
             resp_bytes = resp.read().decode("utf-8")
             status_code = resp.getcode()
             try:

@@ -8,11 +8,25 @@ CLI for pinging, listing, adding, and removing peer Antigravity instances.
 import argparse
 import json
 import os
+import ssl
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict
+
+def get_ssl_context() -> ssl.SSLContext:
+    if os.getenv("PEER_INSECURE_SSL") == "1":
+        return ssl._create_unverified_context()
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
 
 REGISTRY_PATH = Path(__file__).parent / "peers.json"
 
@@ -37,7 +51,7 @@ def ping_url(url: str, timeout: int = 3) -> Dict[str, Any]:
         method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return {"reachable": True, "details": data}
     except Exception as e:

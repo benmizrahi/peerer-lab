@@ -9,10 +9,15 @@ import os
 import sys
 from pathlib import Path
 
-# Add project root to path
+# Add project root and config paths to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+GEMINI_DIR = Path.home() / ".gemini"
 sys.path.insert(0, str(PROJECT_ROOT / "skills" / "peerer" / "scripts"))
 sys.path.insert(0, str(PROJECT_ROOT / "sidecars" / "peerer"))
+sys.path.insert(0, str(GEMINI_DIR / "config" / "skills" / "peerer" / "scripts"))
+sys.path.insert(0, str(GEMINI_DIR / "config" / "sidecars" / "peerer"))
+sys.path.insert(0, str(GEMINI_DIR / "config" / "plugins" / "peerer" / "skills" / "peerer" / "scripts"))
+sys.path.insert(0, str(GEMINI_DIR / "config" / "plugins" / "peerer" / "sidecars" / "peerer"))
 
 import peers
 import send
@@ -48,7 +53,7 @@ def cmd_inbox(args):
     target = f"{url}/api/v1/inbox"
     req = urllib.request.Request(target, headers={"Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=send.get_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             print(json.dumps(data, indent=2))
     except Exception as e:
@@ -60,7 +65,7 @@ def cmd_health(args):
     url, _ = send.resolve_peer_endpoint(args.peer or "local-node")
     target = f"{url}/health"
     try:
-        with urllib.request.urlopen(target, timeout=5) as resp:
+        with urllib.request.urlopen(target, timeout=5, context=send.get_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             print(json.dumps(data, indent=2))
     except Exception as e:
