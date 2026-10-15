@@ -30,6 +30,8 @@ class TestPeererBridge(unittest.TestCase):
         daemon.CONFIG["host"] = TEST_HOST
         daemon.CONFIG["port"] = TEST_PORT
         daemon.CONFIG["auth_token"] = TEST_TOKEN
+        daemon.CONFIG["broker_url"] = ""      # never touch a real broker from tests
+        daemon.CONFIG["broker_token"] = ""
         os.environ["MOCK_AGENTAPI"] = "1"
         daemon.INBOX.clear()
 
@@ -171,6 +173,90 @@ class TestPeererBridge(unittest.TestCase):
             self.assertNotIn(daemon.CONFIG["instance_name"], ids)
         finally:
             peer_cli.load_registry = orig
+
+    # ---------------- Session sharing ----------------
+
+    def _fake_session(self):
+        """Create a throwaway Antigravity-style session dir and point sessions.brain_dirs at it."""
+        import tempfile, sessions
+        root = Path(tempfile.mkdtemp()) / "brain"
+        cid = "12345678-1234-1234-1234-123456789abc"
+        d = root / cid
+        (d / ".system_generated" / "logs").mkdir(parents=True)
+        (d / ".user_uploaded").mkdir()
+        (d / "report.md").write_text("# Report\n\nHello peer.")
+        (d / "report.md.metadata.json").write_text("{}")
+        (d / ".user_uploaded" / "shot.png").write_bytes(b"\x89PNG fake")
+        (d / "huge.bin").write_bytes(os.urandom(2_000_000))  # incompressible → must be skipped
+        lines = [
+            {"type": "USER_INPUT", "content": "<USER_REQUEST>\nPlease build the thing\n</USER_REQUEST>\nThe current local time is: x"},
+            {"type": "PLANNER_RESPONSE", "content": "Done, see report.md", "tool_calls": [{"name": "write_to_file", "args": {"toolSummary": "Write report"}}]},
+        ]
+        (d / ".system_generated" / "logs" / "transcript.jsonl").write_text("\n".join(json.dumps(l) for l in lines))
+        orig = sessions.brain_dirs
+        sessions.brain_dirs = lambda: [root]
+        return cid, d, orig
+
+    def test_session_list_and_bundle(self):
+        import sessions
+        cid, d, orig = self._fake_session()
+        try:
+            rows = sessions.list_sessions()
+            self.assertEqual(rows[0]["id"], cid)
+            self.assertEqual(rows[0]["title"], "Please build the thing")
+            b = sessions.build_bundle(cid, "Tester")
+            names = [f["path"] for f in b["manifest"]["files"]]
+            self.assertIn("SESSION.md", names)
+            self.assertIn("report.md", names)
+            self.assertIn("uploads/shot.png", names)
+            self.assertNotIn("report.md.metadata.json", names)
+            self.assertNotIn("huge.bin", names)
+            self.assertEqual(b["manifest"]["skipped"][0]["path"], "huge.bin")
+            self.assertLess(b["zip_bytes"], sessions.DEFAULT_BUNDLE_BUDGET)
+        finally:
+            sessions.brain_dirs = orig
+
+    def test_session_share_end_to_end(self):
+        """Receiving a session_share message unpacks it to disk and strips the bundle from the inbox."""
+        import sessions, tempfile, shutil
+        cid, d, orig = self._fake_session()
+        shared_root = Path(tempfile.mkdtemp()) / "Peerer Shared"
+        orig_root = sessions.SHARED_ROOT
+        sessions.SHARED_ROOT = shared_root
+        try:
+            b = sessions.build_bundle(cid, "Alice")
+            meta = {"type": "session_share", "sender_name": "Alice", "session_id": cid,
+                    "note": "have a look", "bundle_b64": b["bundle_b64"]}
+            code, body = self._request("POST", "/api/v1/messages", data={
+                "sender": "alice", "title": "Shared session", "content": "Alice shared a session", "metadata": meta
+            }, token=TEST_TOKEN)
+            self.assertEqual(code, 202)
+            rec = daemon.INBOX[-1]
+            self.assertNotIn("bundle_b64", rec["metadata"])
+            lp = Path(rec["metadata"]["local_path"])
+            self.assertTrue(lp.is_dir())
+            self.assertTrue(str(lp).startswith(str(shared_root)))
+            self.assertTrue((lp / "SESSION.md").exists())
+            self.assertTrue((lp / "report.md").exists())
+            self.assertTrue((lp / "uploads" / "shot.png").exists())
+            self.assertEqual(rec["metadata"]["session_title"], "Please build the thing")
+            # UI endpoints honour the sandbox
+            code, body = self._request("POST", "/api/v1/ui/open", data={"path": "/etc/passwd"})
+            self.assertEqual(code, 403)
+            code, body = self._request("POST", "/api/v1/ui/open-agent", data={"path": str(lp)})
+            self.assertEqual(code, 200)  # MOCK_AGENTAPI
+        finally:
+            sessions.brain_dirs = orig
+            sessions.SHARED_ROOT = orig_root
+            shutil.rmtree(shared_root.parent, ignore_errors=True)
+
+    def test_unpack_rejects_path_traversal(self):
+        import sessions, io, zipfile, base64
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("../../evil.txt", "x")
+        with self.assertRaises(ValueError):
+            sessions.unpack_bundle(base64.b64encode(buf.getvalue()).decode(), "Mallory", "")
 
     # ---------------- Settings ----------------
 

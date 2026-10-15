@@ -69,6 +69,8 @@ def _read_version() -> str:
 
 VERSION = _read_version()
 
+import sessions  # noqa: E402  (same directory)
+
 def resolve_agentapi() -> Optional[str]:
     """Resolves the path to the Antigravity agentapi binary."""
     path = shutil.which("agentapi")
@@ -245,8 +247,28 @@ def dispatch_peer_message(
     """
     Core function that records message in INBOX and invokes agentapi.
     """
-    metadata = metadata or {}
+    metadata = dict(metadata or {})
     title = title or "Peer Message"
+    sender_label = metadata.get("sender_name") or sender
+    if metadata.get("sender_name") and metadata["sender_name"] != sender:
+        sender_label = f"{metadata['sender_name']} ({sender})"
+
+    # A shared session arrives as a zip inside metadata — unpack it to disk and keep only the summary
+    shared_session: Optional[Dict[str, Any]] = None
+    if metadata.get("type") == "session_share" and metadata.get("bundle_b64"):
+        bundle = metadata.pop("bundle_b64")
+        try:
+            shared_session = sessions.unpack_bundle(bundle, metadata.get("sender_name") or sender, metadata.get("session_id") or "")
+            metadata.update({
+                "local_path": shared_session["local_path"],
+                "session_title": shared_session["title"],
+                "files": shared_session["files"],
+                "skipped": shared_session["skipped"],
+            })
+            logger.info("Unpacked shared session from %s -> %s", sender, shared_session["local_path"])
+        except Exception as e:
+            logger.error("Failed to unpack shared session from %s: %s", sender, e)
+            metadata["unpack_error"] = str(e)
 
     msg_record = {
         "id": f"msg_{int(time.time() * 1000)}",
@@ -264,18 +286,17 @@ def dispatch_peer_message(
     if metadata:
         metadata_snippet = f"\nMetadata Context:\n{json.dumps(metadata, indent=2)}\n"
 
-    sender_label = metadata.get("sender_name") or sender
-    if metadata.get("sender_name") and metadata["sender_name"] != sender:
-        sender_label = f"{metadata['sender_name']} ({sender})"
-
-    agent_prompt = (
-        f"=== Incoming Message from Antigravity Peer [{sender_label}] ===\n"
-        f"Title: {title}\n"
-        f"{metadata_snippet}"
-        f"Message Body:\n{content}\n"
-        f"==========================================================\n"
-        f"Action Required: Respond to or execute the above request sent by peer instance '{sender}'."
-    )
+    if shared_session:
+        agent_prompt = sessions.agent_prompt_for_shared_session(sender_label, shared_session, metadata.get("note") or "")
+    else:
+        agent_prompt = (
+            f"=== Incoming Message from Antigravity Peer [{sender_label}] ===\n"
+            f"Title: {title}\n"
+            f"{metadata_snippet}"
+            f"Message Body:\n{content}\n"
+            f"==========================================================\n"
+            f"Action Required: Respond to or execute the above request sent by peer instance '{sender}'."
+        )
 
     if os.getenv("MOCK_AGENTAPI") == "1":
         logger.info("[MOCK] Delivered to agentapi: sender=%s, conv_id=%s", sender, conversation_id)
@@ -330,6 +351,22 @@ def dispatch_peer_message(
         return {"status": "error", "error": "agentapi invocation failed", "details": err_msg}
     except subprocess.TimeoutExpired:
         logger.error("agentapi command timed out after 30s")
+        return {"status": "error", "error": "Timeout while invoking agentapi"}
+
+
+def open_in_agent(title: str, prompt: str) -> Dict[str, Any]:
+    """Start a new Antigravity conversation with the given prompt (no inbox record)."""
+    if os.getenv("MOCK_AGENTAPI") == "1":
+        return {"status": "accepted", "mock": True}
+    if not AGENTAPI_PATH:
+        return {"status": "error", "error": "agentapi executable not found. Ensure Antigravity is running."}
+    try:
+        res = subprocess.run([AGENTAPI_PATH, "new-conversation", f"--title={title}", prompt],
+                             capture_output=True, text=True, timeout=30, check=True)
+        return {"status": "accepted", "output": res.stdout.strip()}
+    except subprocess.CalledProcessError as e:
+        return {"status": "error", "error": e.stderr.strip() or str(e)}
+    except subprocess.TimeoutExpired:
         return {"status": "error", "error": "Timeout while invoking agentapi"}
 
 
@@ -567,6 +604,15 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             self._send_html(HTTPStatus.OK, "<h1>Peerer Mesh Running</h1><p>Web dashboard template missing.</p>")
             return
 
+        # Local sessions the user can share (most recent first)
+        if path == "/api/v1/ui/sessions":
+            try:
+                self._send_json(HTTPStatus.OK, {"sessions": sessions.list_sessions(30),
+                                                "current": (self.path.split("?", 1)[1] if "?" in self.path else "")})
+            except Exception as e:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(e)})
+            return
+
         # UI Settings (read) — token is masked, never returned in full
         if path == "/api/v1/ui/settings":
             prof = detect_profile()
@@ -720,6 +766,93 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"ok": False, "error": msg})
             except Exception as e:
                 self._send_json(HTTPStatus.OK, {"ok": False, "error": f"Could not reach server: {e}"})
+            return
+
+        # Share a local session (artifacts + transcript digest) with a peer
+        if path == "/api/v1/ui/share-session":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except Exception as e:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"status": "error", "error": f"Invalid JSON: {e}"})
+                return
+            peer = body.get("peer"); conv_id = (body.get("conversation_id") or "").strip()
+            note = (body.get("note") or "").strip()
+            include_transcript = body.get("include_transcript", True) is not False
+            if not peer or not conv_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"status": "error", "error": "peer and conversation_id are required"})
+                return
+            me = CONFIG.get("display_name") or CONFIG.get("instance_name")
+            try:
+                bundle = sessions.build_bundle(conv_id, me, include_transcript=include_transcript)
+            except FileNotFoundError as e:
+                self._send_json(HTTPStatus.NOT_FOUND, {"status": "error", "error": str(e)}); return
+            except ValueError as e:
+                self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"status": "error", "error": str(e)}); return
+            man = bundle["manifest"]
+            title = f"Shared session: {man['title']}"
+            content = (f"{me} shared the session “{man['title']}” with you "
+                       f"({len(man['files'])} file{'s' if len(man['files']) != 1 else ''}, {bundle['zip_bytes'] // 1024} KB)."
+                       + (f"\n\nNote: {note}" if note else ""))
+            metadata = {"type": "session_share", "sender_name": me, "session_id": conv_id,
+                        "session_title": man["title"], "note": note, "files": man["files"],
+                        "skipped": man["skipped"], "zip_bytes": bundle["zip_bytes"], "bundle_b64": bundle["bundle_b64"]}
+            target_name = (DISCOVERED_PEERS.get(peer) or {}).get("display_name") or peer
+            try:
+                import send as send_cli
+                res = send_cli.send_message(peer=peer, message=content, title=title,
+                                            sender=CONFIG.get("instance_name", "peerer-local"), metadata=metadata)
+            except Exception as e:
+                res = {"status": "error", "error": str(e)}
+            OUTBOX.append({
+                "id": f"msg_out_{int(time.time() * 1000)}", "sent_at": time.time(),
+                "target_peer": peer, "target_name": target_name, "title": title, "content": content,
+                "metadata": {k: v for k, v in metadata.items() if k != "bundle_b64"},
+                "status": res.get("status")
+            })
+            code = HTTPStatus.OK if res.get("status") == "success" else HTTPStatus.INTERNAL_SERVER_ERROR
+            self._send_json(code, {**res, "zip_bytes": bundle["zip_bytes"], "files": man["files"], "skipped": man["skipped"]})
+            return
+
+        # Reveal a received session (or a file in it) in Finder / file manager — restricted to ~/Peerer Shared
+        if path == "/api/v1/ui/open":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except Exception as e:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)}); return
+            target = body.get("path") or ""
+            if not target or not sessions.is_within_shared_root(target) or not Path(target).exists():
+                self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "Only files under ~/Peerer Shared can be opened"}); return
+            try:
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", target])
+                elif shutil.which("xdg-open"):
+                    subprocess.Popen(["xdg-open", target])
+                self._send_json(HTTPStatus.OK, {"ok": True})
+            except Exception as e:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": str(e)})
+            return
+
+        # Open a received session in a new Antigravity conversation
+        if path == "/api/v1/ui/open-agent":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except Exception as e:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"status": "error", "error": str(e)}); return
+            target = body.get("path") or ""
+            if not target or not sessions.is_within_shared_root(target) or not Path(target).is_dir():
+                self._send_json(HTTPStatus.FORBIDDEN, {"status": "error", "error": "Not a received session folder"}); return
+            try:
+                man = json.loads((Path(target) / "manifest.json").read_text())
+            except Exception:
+                man = {}
+            info = {"title": man.get("title") or Path(target).name, "local_path": target,
+                    "files": man.get("files") or [{"path": p.name, "bytes": p.stat().st_size} for p in Path(target).iterdir() if p.is_file()]}
+            who = body.get("sender_name") or man.get("shared_by") or "a peer"
+            res = open_in_agent(f"[Shared by {who}] {info['title']}", sessions.agent_prompt_for_shared_session(who, info, body.get("note") or ""))
+            self._send_json(HTTPStatus.OK if res.get("status") == "accepted" else HTTPStatus.INTERNAL_SERVER_ERROR, res)
             return
 
         # UI Task Dispatch Endpoint (Called from embedded UI)

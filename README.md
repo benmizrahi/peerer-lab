@@ -18,7 +18,7 @@ See who's online, chat, and share sessions or data with other Antigravity users 
 |---|---|
 | **Presence** | A live list of other Antigravity users currently online. |
 | **Chat** | Send a message to one peer or broadcast to everyone. It lands as a new conversation (or in an existing one) on their side, delivered through `agentapi`. |
-| **Share Session** | One click sends your current conversation ID so a peer can pick up where you are. |
+| **Share Session** | Sends a portable copy of a conversation — artifacts, uploads, and a readable transcript — so a peer can open it in their own Antigravity and continue from where you were. Only what you explicitly share leaves your machine. |
 | **Share Data** | Paste a diff, a query, JSON — peers get a copyable card. |
 | **Notifications** | Native macOS/Linux desktop notification plus an in-panel toast and unread badge when something arrives, even if the panel is closed. |
 | **Settings** | Name (auto-detected from your Antigravity account), server, token, notifications — editable in the panel, applied live. |

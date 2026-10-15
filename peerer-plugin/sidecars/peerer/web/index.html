@@ -601,6 +601,60 @@
       padding-top: 2px;
     }
 
+    .session-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-left: 2px solid var(--blue);
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .session-card-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-bright);
+    }
+
+    .session-card-meta {
+      font-size: 10.5px;
+      color: var(--text-muted);
+    }
+
+    .session-files {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 96px;
+      overflow-y: auto;
+    }
+
+    .session-file {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--text);
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 3px;
+      padding: 2px 6px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .session-file:hover { color: var(--blue); }
+
+    .session-file span:last-child { color: var(--text-muted); flex-shrink: 0; }
+
+    .session-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
     .setup-banner {
       display: flex;
       align-items: center;
@@ -757,6 +811,30 @@
         </svg>
       </button>
     </form>
+  </div>
+
+  <!-- Share Session Modal -->
+  <div id="session-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card" style="max-width: 340px;">
+      <div style="font-size: 12px; font-weight: 500; color: var(--text-bright);">Share a session</div>
+      <div style="font-size: 11px; color: var(--text-muted); margin-top: -2px;">
+        Sends a copy of the conversation and its artifacts. The peer can open it in their Antigravity.
+      </div>
+      <select id="session-select" class="field-input" style="font-size: 11.5px;"></select>
+      <div class="field-sub" id="session-info">—</div>
+      <label class="field-check" style="font-size: 11.5px;">
+        <input type="checkbox" id="session-transcript" checked />
+        <span>Include conversation transcript</span>
+      </label>
+      <input type="text" id="session-note" class="field-input" placeholder="Note for the peer (optional)" />
+      <div class="modal-btns" style="align-items: center; justify-content: space-between;">
+        <span class="field-status" id="session-status"></span>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-modal" onclick="closeSessionModal()">Cancel</button>
+          <button class="btn-modal primary" id="session-send-btn" onclick="submitShareSession()">Share</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Share Data Modal -->
@@ -1005,14 +1083,28 @@
               ` : ''}
 
               <!-- Shared Session Card -->
-              ${meta.type === 'session_share' || (msg.title && msg.title.toLowerCase().includes('shared session')) ? `
-                <div class="share-box">
-                  <div class="share-box-header">🔄 Shared Session</div>
-                  <div class="share-box-body">${escapeHtml(msg.content)}</div>
-                  ${meta.session_id ? `
-                    <button class="btn-action-pill" onclick="copyToClipboard('${escapeHtml(meta.session_id)}')">
-                      Copy ID
-                    </button>
+              ${meta.type === 'session_share' ? `
+                <div class="session-card">
+                  <div class="session-card-title">🗂 ${escapeHtml(meta.session_title || 'Shared session')}</div>
+                  <div class="session-card-meta">
+                    ${isSelf ? 'You shared' : 'Shared by ' + escapeHtml(msg.sender)} ·
+                    ${(meta.files || []).length} file${(meta.files || []).length === 1 ? '' : 's'}
+                    ${meta.zip_bytes ? ' · ' + fmtBytes(meta.zip_bytes) : ''}
+                    ${(meta.skipped || []).length ? ' · ' + meta.skipped.length + ' skipped (too large)' : ''}
+                  </div>
+                  ${meta.note ? `<div style="font-size: 11.5px;">${escapeHtml(meta.note)}</div>` : ''}
+                  ${meta.unpack_error ? `<div class="field-status err">Could not unpack: ${escapeHtml(meta.unpack_error)}</div>` : ''}
+                  ${!isSelf && meta.local_path ? `
+                    <div class="session-files">
+                      ${(meta.files || []).map(f => `
+                        <div class="session-file" title="Open" onclick="openShared('${escapeHtml(meta.local_path)}/${escapeHtml(f.path)}')">
+                          <span>${escapeHtml(f.path)}</span><span>${fmtBytes(f.bytes)}</span>
+                        </div>`).join('')}
+                    </div>
+                    <div class="session-actions">
+                      <button class="btn-modal primary" onclick="openSharedWithAgent('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}')">Open with Antigravity</button>
+                      <button class="btn-modal" onclick="openShared('${escapeHtml(meta.local_path)}')">Show files</button>
+                    </div>
                   ` : ''}
                 </div>
               ` : meta.type === 'data_share' ? `
@@ -1078,21 +1170,106 @@
       });
     }
 
-    function shareSession() {
-      const convId = activeConvId || prompt('Conversation ID to share:', 'current-session');
+    // ---------------- Share Session ----------------
+    let sessionsCache = [];
+
+    function fmtBytes(n) {
+      if (!n && n !== 0) return '';
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+      return (n / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    async function shareSession() {
+      if (!hasTargets()) { alert('No active peer to share with yet.'); return; }
+      document.getElementById('session-modal').style.display = 'flex';
+      setStatus('session-status', 'Loading sessions…');
+      try {
+        const r = await (await fetch('/api/v1/ui/sessions')).json();
+        sessionsCache = r.sessions || [];
+        const sel = document.getElementById('session-select');
+        sel.innerHTML = sessionsCache.map(s => {
+          const when = new Date(s.updated_at * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          const cur = s.id === activeConvId ? ' (current)' : '';
+          return `<option value="${escapeHtml(s.id)}">${escapeHtml(s.title)}${cur} · ${when}</option>`;
+        }).join('') || '<option value="">No sessions found</option>';
+        if (activeConvId && sessionsCache.some(s => s.id === activeConvId)) sel.value = activeConvId;
+        updateSessionInfo();
+        setStatus('session-status', '');
+      } catch (e) {
+        setStatus('session-status', 'Could not list sessions', 'err');
+      }
+    }
+
+    function updateSessionInfo() {
+      const id = document.getElementById('session-select').value;
+      const s = sessionsCache.find(q => q.id === id);
+      const el = document.getElementById('session-info');
+      if (!s) { el.textContent = '—'; return; }
+      el.textContent = `${s.artifacts} artifact${s.artifacts === 1 ? '' : 's'} (${fmtBytes(s.artifact_bytes)})` +
+                       (s.has_transcript ? ' · transcript available' : ' · no transcript');
+    }
+    document.getElementById('session-select').addEventListener('change', updateSessionInfo);
+
+    function closeSessionModal() {
+      document.getElementById('session-modal').style.display = 'none';
+      document.getElementById('session-note').value = '';
+    }
+
+    function hasTargets() {
+      const local = appState.local_node || {};
+      return (appState.peers || []).some(p => p.peer_id !== local.instance_name && p.status === 'online');
+    }
+
+    function currentTargets() {
+      const local = appState.local_node || {};
+      const active = (appState.peers || []).filter(p => p.peer_id !== local.instance_name && p.status === 'online');
+      return (selectedTarget === 'all' || selectedTarget === 'none') ? active.map(p => p.peer_id) : [selectedTarget];
+    }
+
+    async function submitShareSession() {
+      const convId = document.getElementById('session-select').value;
       if (!convId) return;
+      const btn = document.getElementById('session-send-btn');
+      btn.disabled = true;
+      setStatus('session-status', 'Packing…');
+      const payload = {
+        conversation_id: convId,
+        note: document.getElementById('session-note').value.trim(),
+        include_transcript: document.getElementById('session-transcript').checked
+      };
+      let ok = 0, lastErr = '';
+      for (const peer of currentTargets()) {
+        try {
+          const res = await fetch('/api/v1/ui/share-session', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, peer })
+          });
+          const r = await res.json();
+          if (res.ok && r.status === 'success') ok++; else lastErr = r.error || `HTTP ${res.status}`;
+        } catch (e) { lastErr = String(e); }
+      }
+      btn.disabled = false;
+      if (ok) {
+        closeSessionModal();
+        showToast('Session shared', `Sent to ${ok} peer${ok === 1 ? '' : 's'}`);
+        refreshState();
+      } else {
+        setStatus('session-status', lastErr || 'Failed', 'err');
+      }
+    }
 
-      const note = prompt('Optional note for peers:', '');
-      const content = `Session ID: ${convId}\n${note ? `Note: ${note}` : ''}`;
+    async function openShared(path) {
+      await fetch('/api/v1/ui/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
+    }
 
-      dispatch({
-        title: `Shared Session: ${convId.slice(0, 8)}...`,
-        message: content,
-        metadata: {
-          type: 'session_share',
-          session_id: convId
-        }
-      });
+    async function openSharedWithAgent(path, who) {
+      showToast('Opening in Antigravity…', 'A new conversation will start with this session');
+      const r = await (await fetch('/api/v1/ui/open-agent', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, sender_name: who })
+      })).json();
+      if (r.status !== 'accepted') showToast('Could not open', r.error || 'agentapi error');
     }
 
     function openShareModal() {
