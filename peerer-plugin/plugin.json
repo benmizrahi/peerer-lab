@@ -1,5 +1,5 @@
 {
   "name": "peerer",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Native peer-to-peer communication bridge connecting Antigravity instances via background sidecars and agentapi."
 }

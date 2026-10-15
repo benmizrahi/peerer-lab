@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-15
+
 ### Fixed
 - **Clear chat did nothing**: the Antigravity webview swallows `confirm()` dialogs. Clearing is now a two-click inline confirmation; all `alert/confirm/prompt` dialogs were removed from the panel in favour of toasts.
 - **Open with Antigravity now always lands somewhere**: when Antigravity refuses to start a new conversation (`project_id is required…`, no project window active), the session prompt is delivered into the conversation the panel is open in instead. Same fallback for inbound messages. `agentapi` is now run without `check=True` so a non-zero exit can't bypass the fallback.
@@ -53,7 +55,8 @@ First public release.
 - Broker and peer tokens are stored only in the git-ignored `config.json`; the settings API never returns a token in full.
 - Settings endpoint accepts only user-facing keys (`display_name`, `instance_name`, `broker_url`, `broker_token`, `notifications`).
 
-[Unreleased]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.2...HEAD
 [1.0.0]: https://github.com/benmizrahi/peerer-lab/releases/tag/v1.0.0
 [1.1.0]: https://github.com/benmizrahi/peerer-lab/compare/v1.0.0...v1.1.0
 [1.1.1]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.0...v1.1.1
+[1.1.2]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.1...v1.1.2
