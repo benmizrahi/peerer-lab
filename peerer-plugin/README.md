@@ -99,14 +99,27 @@ From a local checkout: `./install.sh`
 **Uninstall:** `rm -rf ~/.gemini/config/plugins/peerer ~/.gemini/config/skills/peerer ~/.local/bin/peerer ~/.peerer`
 
 ### 1. Configure Peerer
-Edit `sidecars/peerer/config.json`:
+
+**In the panel:** click the ⚙️ icon (top-right of *Mesh & Activity*) to set:
+
+- **Display name** — pre-filled from your Antigravity Google account / macOS profile / git identity. Your peer ID is derived from it (`Ben Mizrahi` → `ben-mizrahi`).
+- **Server URL + access token** — the broker other peers connect through. *Test connection* checks it before you save. Leave blank for local-network-only mode.
+- **Desktop notifications** on/off.
+
+Changes are saved to `sidecars/peerer/config.json` and applied immediately (the daemon re-registers with the server — no restart needed). The panel opens Settings automatically on first run if no server is configured.
+
+**Or edit the file directly:**
 ```json
 {
-  "instance_name": "peerer-local",
+  "display_name": "Ben Mizrahi",
+  "instance_name": "ben-mizrahi",
   "host": "127.0.0.1",
   "port": 8950,
-  "auth_token": "antigravity-peer-secret-token",
-  "inbox_limit": 50
+  "auth_token": "…",
+  "inbox_limit": 50,
+  "broker_url": "https://your-broker.a.run.app",
+  "broker_token": "…",
+  "notifications": true
 }
 ```
 

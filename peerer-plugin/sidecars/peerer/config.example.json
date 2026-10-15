@@ -1,5 +1,6 @@
 {
-  "instance_name": "peerer-local",
+  "display_name": "Your Name",
+  "instance_name": "your-name",
   "host": "127.0.0.1",
   "port": 8950,
   "auth_token": "YOUR_PEER_AUTH_TOKEN",

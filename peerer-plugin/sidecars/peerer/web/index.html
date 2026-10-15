@@ -473,6 +473,138 @@
       0% { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
       100% { border-color: var(--border); box-shadow: none; }
     }
+
+    /* Settings View */
+    .settings-view {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .settings-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .settings-section:last-of-type {
+      border-bottom: none;
+    }
+
+    .settings-heading {
+      font-size: 10.5px;
+      font-weight: 500;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .field-label {
+      font-size: 11.5px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .field-hint {
+      font-size: 10px;
+      color: var(--text-muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0 6px;
+    }
+
+    .field-input {
+      background: var(--surface);
+      border: 1px solid var(--border-card);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 7px 10px;
+      outline: none;
+      width: 100%;
+      transition: border-color 0.15s ease;
+    }
+
+    .field-input:focus {
+      border-color: var(--blue);
+    }
+
+    .field-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .field-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .field-sub code {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      color: var(--text);
+    }
+
+    .field-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .field-status {
+      font-size: 11px;
+      color: var(--text-muted);
+      min-height: 14px;
+    }
+
+    .field-status.ok { color: var(--green); }
+    .field-status.err { color: #f28b82; }
+
+    .field-check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .field-check input {
+      accent-color: var(--blue);
+      width: 14px;
+      height: 14px;
+    }
+
+    .settings-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding-top: 2px;
+    }
+
+    .btn-icon.active {
+      background: var(--blue-container);
+      color: var(--blue);
+    }
   </style>
 </head>
 <body>
@@ -514,6 +646,14 @@
           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
         </svg>
       </button>
+
+      <!-- Settings Icon -->
+      <button class="btn-icon" id="settings-btn" onclick="toggleSettings()" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
     </div>
   </header>
 
@@ -526,8 +666,51 @@
     <div id="messages-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
   </main>
 
+  <!-- Settings View (replaces chat while open) -->
+  <main class="settings-view" id="settings-view" style="display: none;">
+    <div class="settings-section">
+      <div class="settings-heading">You</div>
+      <label class="field">
+        <span class="field-label">Display name <span class="field-hint" id="name-source"></span></span>
+        <input type="text" id="set-name" class="field-input" placeholder="How others see you" autocomplete="off" />
+      </label>
+      <div class="field-sub">Peer ID: <code id="set-peer-id">—</code></div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-heading">Server</div>
+      <label class="field">
+        <span class="field-label">Server URL</span>
+        <input type="url" id="set-url" class="field-input" placeholder="https://your-broker.a.run.app  (blank = local network only)" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span class="field-label">Access token</span>
+        <input type="password" id="set-token" class="field-input" placeholder="Leave blank to keep current" autocomplete="off" />
+      </label>
+      <div class="field-row">
+        <button class="btn-modal" type="button" onclick="testServer()">Test connection</button>
+        <span class="field-status" id="test-status"></span>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <label class="field-check">
+        <input type="checkbox" id="set-notify" />
+        <span>Desktop notifications for new messages</span>
+      </label>
+    </div>
+
+    <div class="settings-footer">
+      <span class="field-status" id="save-status"></span>
+      <div style="display:flex; gap:6px;">
+        <button class="btn-modal" type="button" onclick="toggleSettings(false)">Cancel</button>
+        <button class="btn-modal primary" type="button" id="save-btn" onclick="saveSettings()">Save</button>
+      </div>
+    </div>
+  </main>
+
   <!-- Minimal Floating Rounded Input -->
-  <div class="input-wrap">
+  <div class="input-wrap" id="input-wrap">
     <form class="input-box" onsubmit="handleSend(event)">
       <input
         type="text"
@@ -885,6 +1068,124 @@
         }
       });
     }
+
+    // ---------------- Settings ----------------
+    let settingsOpen = false;
+    let settingsLoaded = null;
+
+    function toggleSettings(force) {
+      settingsOpen = typeof force === 'boolean' ? force : !settingsOpen;
+      document.getElementById('settings-view').style.display = settingsOpen ? 'flex' : 'none';
+      document.getElementById('chat-stream').style.display = settingsOpen ? 'none' : 'flex';
+      document.getElementById('input-wrap').style.display = settingsOpen ? 'none' : 'block';
+      document.getElementById('settings-btn').classList.toggle('active', settingsOpen);
+      if (settingsOpen) loadSettings();
+    }
+
+    function setStatus(id, text, kind) {
+      const el = document.getElementById(id);
+      el.textContent = text || '';
+      el.className = 'field-status' + (kind ? ' ' + kind : '');
+    }
+
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/v1/ui/settings');
+        const s = await res.json();
+        settingsLoaded = s;
+
+        const nameEl = document.getElementById('set-name');
+        nameEl.value = s.display_name || s.profile?.name || '';
+        nameEl.placeholder = s.profile?.name ? `e.g. ${s.profile.name}` : 'How others see you';
+
+        const src = s.profile?.source;
+        const srcLabel = { antigravity: 'from Antigravity account', macos: 'from macOS profile', git: 'from git' }[src];
+        document.getElementById('name-source').textContent = srcLabel || '';
+        document.getElementById('name-source').style.display = srcLabel ? '' : 'none';
+
+        document.getElementById('set-peer-id').textContent = s.instance_name || '—';
+        document.getElementById('set-url').value = s.broker_url || '';
+        const tok = document.getElementById('set-token');
+        tok.value = '';
+        tok.placeholder = s.broker_token_set ? `Saved (${s.broker_token_hint}) — leave blank to keep` : 'Paste the token you were given';
+        document.getElementById('set-notify').checked = !!s.notifications;
+
+        setStatus('test-status', s.broker_url ? (s.broker_connected ? 'Connected' : 'Not connected') : '', s.broker_connected ? 'ok' : '');
+        setStatus('save-status', '');
+      } catch (e) {
+        setStatus('save-status', 'Could not load settings', 'err');
+      }
+    }
+
+    // Live-preview the peer id as the user types a name
+    document.getElementById('set-name').addEventListener('input', (e) => {
+      const slug = e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'peer';
+      document.getElementById('set-peer-id').textContent = slug;
+    });
+
+    async function testServer() {
+      const url = document.getElementById('set-url').value.trim();
+      const token = document.getElementById('set-token').value;
+      if (!url) { setStatus('test-status', 'Enter a server URL first', 'err'); return; }
+      setStatus('test-status', 'Testing…');
+      try {
+        const res = await fetch('/api/v1/ui/settings/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ broker_url: url, broker_token: token })
+        });
+        const r = await res.json();
+        if (r.ok) {
+          setStatus('test-status', `Connected · ${r.peers_online} peer${r.peers_online === 1 ? '' : 's'} online · ${r.latency_ms} ms`, 'ok');
+        } else {
+          setStatus('test-status', r.error || 'Failed', 'err');
+        }
+      } catch (e) {
+        setStatus('test-status', 'Request failed', 'err');
+      }
+    }
+
+    async function saveSettings() {
+      const btn = document.getElementById('save-btn');
+      btn.disabled = true;
+      setStatus('save-status', 'Saving…');
+      const payload = {
+        display_name: document.getElementById('set-name').value,
+        broker_url: document.getElementById('set-url').value,
+        broker_token: document.getElementById('set-token').value,
+        notifications: document.getElementById('set-notify').checked
+      };
+      try {
+        const res = await fetch('/api/v1/ui/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const r = await res.json();
+        if (res.ok && r.status === 'ok') {
+          setStatus('save-status', 'Saved · reconnecting…', 'ok');
+          showToast('Settings saved', r.broker_url ? `Connecting as ${r.display_name}` : `Local-only mode as ${r.display_name}`);
+          setTimeout(() => { toggleSettings(false); refreshState(); }, 700);
+        } else {
+          setStatus('save-status', r.error || 'Save failed', 'err');
+        }
+      } catch (e) {
+        setStatus('save-status', 'Save failed', 'err');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // First run: open settings automatically when no server is configured
+    (async () => {
+      try {
+        const s = await (await fetch('/api/v1/ui/settings')).json();
+        if (!s.broker_url && !localStorage.getItem('peerer.settingsSeen')) {
+          localStorage.setItem('peerer.settingsSeen', '1');
+          toggleSettings(true);
+        }
+      } catch (_) {}
+    })();
 
     // Polling loop
     refreshState();

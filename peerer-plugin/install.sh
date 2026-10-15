@@ -64,26 +64,36 @@ ok "Source ready"
 # ---------------------------------------------------------------------------
 CONFIG_FILE="$PLUGIN_DIR/sidecars/peerer/config.json"
 if [[ ! -f "$CONFIG_FILE" ]]; then
-  INSTANCE="${PEERER_INSTANCE_NAME:-$(hostname -s 2>/dev/null || hostname)}"
+  # Best-effort human name: macOS full name → git user.name → Antigravity account → hostname
+  DETECTED_NAME="$(id -F 2>/dev/null || true)"
+  [[ "$DETECTED_NAME" == *" "* ]] || DETECTED_NAME="$(git config --global user.name 2>/dev/null || true)"
+  if [[ -z "$DETECTED_NAME" && -f "$HOME/.gemini/google_accounts.json" ]]; then
+    DETECTED_NAME="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));e=d.get("active") or (d.get("old") or [""])[0];print(e.split("@")[0])' "$HOME/.gemini/google_accounts.json" 2>/dev/null || true)"
+  fi
+  [[ -n "$DETECTED_NAME" ]] || DETECTED_NAME="$(hostname -s 2>/dev/null || hostname)"
+
+  DISPLAY_NAME="${PEERER_INSTANCE_NAME:-$DETECTED_NAME}"
   BROKER_URL="${PEERER_BROKER_URL:-}"
   BROKER_TOKEN="${PEERER_BROKER_TOKEN:-}"
 
   if [[ "${PEERER_NONINTERACTIVE:-0}" != "1" && -t 0 ]]; then
     echo
     bold "Configure Peerer"
-    read -r -p "  Instance name [$INSTANCE]: " _in;  INSTANCE="${_in:-$INSTANCE}"
-    read -r -p "  Broker URL (blank = local-only): " _in; BROKER_URL="${_in:-$BROKER_URL}"
+    read -r -p "  Your name, as others will see it [$DISPLAY_NAME]: " _in;  DISPLAY_NAME="${_in:-$DISPLAY_NAME}"
+    read -r -p "  Server URL (blank = local-only, you can set it later in Settings): " _in; BROKER_URL="${_in:-$BROKER_URL}"
     if [[ -n "$BROKER_URL" ]]; then
-      read -r -s -p "  Broker token: " _in; echo; BROKER_TOKEN="${_in:-$BROKER_TOKEN}"
+      read -r -s -p "  Server token: " _in; echo; BROKER_TOKEN="${_in:-$BROKER_TOKEN}"
     fi
   fi
 
   AUTH_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
-  python3 - "$CONFIG_FILE" "$INSTANCE" "$AUTH_TOKEN" "$BROKER_URL" "$BROKER_TOKEN" <<'PY'
-import json, sys
-path, instance, auth, burl, btok = sys.argv[1:]
+  python3 - "$CONFIG_FILE" "$DISPLAY_NAME" "$AUTH_TOKEN" "$BROKER_URL" "$BROKER_TOKEN" <<'PY'
+import json, re, sys
+path, display, auth, burl, btok = sys.argv[1:]
+slug = re.sub(r"[^a-z0-9]+", "-", display.lower()).strip("-") or "peer"
 cfg = {
-    "instance_name": instance,
+    "display_name": display,
+    "instance_name": slug,
     "host": "127.0.0.1",
     "port": 8950,
     "auth_token": auth,
@@ -94,7 +104,7 @@ cfg = {
 }
 json.dump(cfg, open(path, "w"), indent=2)
 PY
-  ok "Created config.json (instance: $INSTANCE)"
+  ok "Created config.json (you are “$DISPLAY_NAME”)"
 else
   ok "Keeping existing config.json"
 fi

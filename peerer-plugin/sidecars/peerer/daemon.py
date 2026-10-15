@@ -72,16 +72,74 @@ def resolve_agentapi() -> Optional[str]:
         return candidate2
     return None
 
+CONFIG_FILE = Path(__file__).parent / "config.json"
+
+
+def detect_profile() -> Dict[str, str]:
+    """
+    Best-effort detection of who this user is, for pre-filling the display name.
+    Order: Antigravity Google account → git user.name/email → macOS full name → $USER.
+    """
+    profile: Dict[str, str] = {"name": "", "email": "", "source": ""}
+
+    # 1. Antigravity / Gemini account
+    try:
+        acct_file = Path.home() / ".gemini" / "google_accounts.json"
+        if acct_file.exists():
+            data = json.loads(acct_file.read_text(encoding="utf-8"))
+            email = data.get("active") or (data.get("old") or [None])[0]
+            if email:
+                profile["email"] = email
+                profile["source"] = "antigravity"
+    except Exception:
+        pass
+
+    # 2. git identity
+    try:
+        name = subprocess.run(["git", "config", "--global", "user.name"], capture_output=True, text=True, timeout=3).stdout.strip()
+        email = subprocess.run(["git", "config", "--global", "user.email"], capture_output=True, text=True, timeout=3).stdout.strip()
+        if name and not profile["name"]:
+            profile["name"] = name
+            profile["source"] = profile["source"] or "git"
+        if email and not profile["email"]:
+            profile["email"] = email
+    except Exception:
+        pass
+
+    # 3. macOS account full name (usually the nicest: "Ben Mizrahi")
+    if sys.platform == "darwin":
+        try:
+            full = subprocess.run(["id", "-F"], capture_output=True, text=True, timeout=3).stdout.strip()
+            if full and " " in full:  # prefer a real full name over a handle like g-benmizrahi
+                profile["name"] = full
+                profile["source"] = profile["source"] or "macos"
+        except Exception:
+            pass
+
+    # 4. fallback
+    if not profile["name"]:
+        profile["name"] = profile["email"].split("@")[0] if profile["email"] else (os.getenv("USER") or "antigravity-user")
+    return profile
+
+
+def _slugify(value: str) -> str:
+    """'Ben Mizrahi' -> 'ben-mizrahi' (safe as a broker peer_id)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "peer"
+
+
 def load_configuration() -> Dict[str, Any]:
-    config_file = Path(__file__).parent / "config.json"
+    config_file = CONFIG_FILE
     defaults: Dict[str, Any] = {
-        "instance_name": "antigravity-local",
+        "instance_name": "",
+        "display_name": "",
         "host": "127.0.0.1",
         "port": 8950,
         "auth_token": "antigravity-peer-secret-token",
         "inbox_limit": 50,
         "broker_url": "",
-        "broker_token": ""
+        "broker_token": "",
+        "notifications": True
     }
     if config_file.exists():
         try:
@@ -90,6 +148,14 @@ def load_configuration() -> Dict[str, Any]:
                 defaults.update(loaded)
         except Exception as e:
             logger.warning("Could not read config.json, using defaults: %s", e)
+
+    # Fill identity from the user's profile when not configured
+    if not defaults.get("display_name") or not defaults.get("instance_name"):
+        prof = detect_profile()
+        if not defaults.get("display_name"):
+            defaults["display_name"] = prof["name"]
+        if not defaults.get("instance_name"):
+            defaults["instance_name"] = _slugify(defaults["display_name"]) or "antigravity-local"
 
     # Allow environment overrides
     defaults["host"] = os.getenv("COMM_BRIDGE_HOST", defaults["host"])
@@ -104,6 +170,22 @@ def load_configuration() -> Dict[str, Any]:
     defaults["broker_url"] = os.getenv("PEER_BROKER_URL", defaults.get("broker_url", "")).rstrip("/")
     defaults["broker_token"] = os.getenv("PEER_BROKER_TOKEN", defaults.get("broker_token", ""))
     return defaults
+
+
+def save_configuration(updates: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge `updates` into config.json (preserving unknown keys) and return the saved doc."""
+    current: Dict[str, Any] = {}
+    if CONFIG_FILE.exists():
+        try:
+            current = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            current = {}
+    current.update(updates)
+    tmp = CONFIG_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(CONFIG_FILE)
+    return current
+
 
 CONFIG = load_configuration()
 AGENTAPI_PATH = resolve_agentapi()
@@ -284,7 +366,7 @@ class BrokerSyncWorker(threading.Thread):
         logger.info("Registering with Cloud Run Broker: %s (peer_id: %s)", self.broker_url, self.instance_name)
         payload = {
             "peer_id": self.instance_name,
-            "display_name": f"Antigravity Node ({self.instance_name})",
+            "display_name": CONFIG.get("display_name") or self.instance_name,
             "capabilities": ["task-delegation", "agentapi"],
             "metadata": {"host": CONFIG.get("host"), "port": CONFIG.get("port")}
         }
@@ -353,6 +435,72 @@ class BrokerSyncWorker(threading.Thread):
             pass
 
 
+def start_broker_worker() -> None:
+    """(Re)start the broker worker from the current CONFIG. Safe to call repeatedly."""
+    global BROKER_WORKER
+    if BROKER_WORKER is not None:
+        try:
+            BROKER_WORKER.stop()
+        except Exception:
+            pass
+        BROKER_WORKER = None
+    DISCOVERED_PEERS.clear()
+
+    broker_url = CONFIG.get("broker_url")
+    if not broker_url:
+        logger.info("No broker configured — running in local-only mode.")
+        return
+    token = CONFIG.get("broker_token") or CONFIG.get("auth_token")
+    BROKER_WORKER = BrokerSyncWorker(broker_url, token, CONFIG.get("instance_name", "peerer-local"))
+    BROKER_WORKER.start()
+
+
+def apply_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate + persist user-editable settings and hot-apply them.
+    Editable: display_name, instance_name, broker_url, broker_token, notifications.
+    """
+    allowed = {"display_name", "instance_name", "broker_url", "broker_token", "notifications"}
+    clean: Dict[str, Any] = {}
+    for k, v in updates.items():
+        if k not in allowed:
+            continue
+        if k == "notifications":
+            clean[k] = bool(v)
+        elif isinstance(v, str):
+            clean[k] = v.strip()
+
+    if "broker_url" in clean:
+        url = clean["broker_url"].rstrip("/")
+        if url and not re.match(r"^https?://[^\s/]+", url):
+            raise ValueError("Server URL must start with http:// or https://")
+        clean["broker_url"] = url
+
+    if "display_name" in clean and not clean["display_name"]:
+        clean["display_name"] = detect_profile()["name"]
+
+    # Keep instance_name in sync with display_name unless explicitly provided
+    if "display_name" in clean and not clean.get("instance_name"):
+        clean["instance_name"] = _slugify(clean["display_name"])
+    if "instance_name" in clean:
+        clean["instance_name"] = _slugify(clean["instance_name"])
+
+    # Empty token in the form means "keep the existing one"
+    if clean.get("broker_token") == "" and CONFIG.get("broker_token"):
+        clean.pop("broker_token")
+
+    save_configuration(clean)
+
+    identity_or_server_changed = any(
+        k in clean and clean[k] != CONFIG.get(k)
+        for k in ("instance_name", "display_name", "broker_url", "broker_token")
+    )
+    CONFIG.update(clean)
+    if identity_or_server_changed:
+        start_broker_worker()
+    return clean
+
+
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
@@ -402,6 +550,23 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             self._send_html(HTTPStatus.OK, "<h1>Peerer Mesh Running</h1><p>Web dashboard template missing.</p>")
             return
 
+        # UI Settings (read) — token is masked, never returned in full
+        if path == "/api/v1/ui/settings":
+            prof = detect_profile()
+            tok = CONFIG.get("broker_token") or ""
+            self._send_json(HTTPStatus.OK, {
+                "display_name": CONFIG.get("display_name") or "",
+                "instance_name": CONFIG.get("instance_name") or "",
+                "broker_url": CONFIG.get("broker_url") or "",
+                "broker_token_set": bool(tok),
+                "broker_token_hint": (tok[:4] + "…" + tok[-4:]) if len(tok) >= 12 else ("••••" if tok else ""),
+                "notifications": CONFIG.get("notifications", True) is not False,
+                "broker_connected": BROKER_WORKER is not None and BROKER_WORKER.is_alive(),
+                "profile": prof,
+                "config_path": str(CONFIG_FILE)
+            })
+            return
+
         # UI State API (Local UI poller)
         if path == "/api/v1/ui/state":
             broker_alive = BROKER_WORKER is not None and BROKER_WORKER.is_alive()
@@ -425,6 +590,7 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, {
                 "local_node": {
                     "instance_name": CONFIG.get("instance_name"),
+                    "display_name": CONFIG.get("display_name") or CONFIG.get("instance_name"),
                     "uptime_seconds": round(time.time() - START_TIME, 1),
                     "agentapi_ready": AGENTAPI_PATH is not None or os.getenv("MOCK_AGENTAPI") == "1",
                     "agentapi_path": AGENTAPI_PATH,
@@ -477,6 +643,58 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 "instance_name": CONFIG.get("instance_name"),
                 "timestamp": time.time()
             })
+            return
+
+        # UI Settings (save + hot-apply)
+        if path == "/api/v1/ui/settings":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                saved = apply_settings(body if isinstance(body, dict) else {})
+            except ValueError as e:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"status": "error", "error": str(e)})
+                return
+            except Exception as e:
+                logger.error("Failed to save settings: %s", e)
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"status": "error", "error": str(e)})
+                return
+            self._send_json(HTTPStatus.OK, {
+                "status": "ok",
+                "saved": {k: ("•••" if k == "broker_token" else v) for k, v in saved.items()},
+                "display_name": CONFIG.get("display_name"),
+                "instance_name": CONFIG.get("instance_name"),
+                "broker_url": CONFIG.get("broker_url"),
+            })
+            return
+
+        # UI Settings — test a server connection without saving
+        if path == "/api/v1/ui/settings/test":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except Exception as e:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+                return
+            url = (body.get("broker_url") or "").strip().rstrip("/")
+            token = (body.get("broker_token") or "").strip() or CONFIG.get("broker_token") or ""
+            if not url:
+                self._send_json(HTTPStatus.OK, {"ok": False, "error": "No server URL provided"})
+                return
+            started = time.time()
+            try:
+                req = urllib.request.Request(
+                    f"{url}/api/v1/peers",
+                    headers={"Authorization": f"Bearer {token}", "User-Agent": "AntigravityPeerDaemon/1.0"},
+                )
+                with urllib.request.urlopen(req, timeout=8, context=get_ssl_context()) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                peers_n = len(data) if isinstance(data, list) else len(data.get("peers", [])) if isinstance(data, dict) else 0
+                self._send_json(HTTPStatus.OK, {"ok": True, "peers_online": peers_n, "latency_ms": round((time.time() - started) * 1000)})
+            except urllib.error.HTTPError as e:
+                msg = "Unauthorized — check the token" if e.code in (401, 403) else f"Server returned HTTP {e.code}"
+                self._send_json(HTTPStatus.OK, {"ok": False, "error": msg})
+            except Exception as e:
+                self._send_json(HTTPStatus.OK, {"ok": False, "error": f"Could not reach server: {e}"})
             return
 
         # UI Task Dispatch Endpoint (Called from embedded UI)
@@ -617,21 +835,15 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    global BROKER_WORKER
     host = CONFIG.get("host", "127.0.0.1")
     port = int(CONFIG.get("port", 8950))
     server_address = (host, port)
     logger.info("Starting Antigravity Peer Bridge Daemon on %s:%d", host, port)
-    logger.info("Local Instance Name: %s", CONFIG.get("instance_name"))
+    logger.info("Identity: %s (peer_id: %s)", CONFIG.get("display_name"), CONFIG.get("instance_name"))
     logger.info("agentapi path: %s", AGENTAPI_PATH or "NOT FOUND (set MOCK_AGENTAPI=1 for tests)")
 
     # Start Cloud Run broker worker if configured
-    broker_url = CONFIG.get("broker_url")
-    if broker_url:
-        token = CONFIG.get("broker_token") or CONFIG.get("auth_token")
-        instance = CONFIG.get("instance_name", "peerer-local")
-        BROKER_WORKER = BrokerSyncWorker(broker_url, token, instance)
-        BROKER_WORKER.start()
+    start_broker_worker()
 
     runtime_file = Path(__file__).parent / "runtime.json"
     try:

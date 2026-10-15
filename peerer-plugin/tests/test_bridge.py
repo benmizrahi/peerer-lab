@@ -147,5 +147,78 @@ class TestPeererBridge(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertFalse(body.get("reachable"))
 
+    # ---------------- Settings ----------------
+
+    def test_detect_profile_returns_name(self):
+        prof = daemon.detect_profile()
+        self.assertIn("name", prof)
+        self.assertTrue(prof["name"])
+
+    def test_slugify(self):
+        self.assertEqual(daemon._slugify("Ben Mizrahi"), "ben-mizrahi")
+        self.assertEqual(daemon._slugify("  Weird!!Name__ "), "weird-name")
+        self.assertEqual(daemon._slugify(""), "peer")
+
+    def test_settings_read_masks_token(self):
+        daemon.CONFIG["broker_token"] = "abcd1234efgh5678ijkl"
+        code, body = self._request("GET", "/api/v1/ui/settings")
+        self.assertEqual(code, 200)
+        self.assertTrue(body["broker_token_set"])
+        self.assertNotIn("abcd1234efgh5678ijkl", json.dumps(body))
+        self.assertIn("profile", body)
+        for k in ("display_name", "instance_name", "broker_url", "notifications"):
+            self.assertIn(k, body)
+
+    def test_settings_save_and_hot_apply(self):
+        import tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mkdtemp()) / "config.json"
+        orig = daemon.CONFIG_FILE
+        daemon.CONFIG_FILE = tmp
+        try:
+            code, body = self._request("POST", "/api/v1/ui/settings", data={
+                "display_name": "Test Person",
+                "broker_url": "",
+                "broker_token": "",
+                "notifications": False
+            })
+            self.assertEqual(code, 200)
+            self.assertEqual(body["status"], "ok")
+            self.assertEqual(daemon.CONFIG["display_name"], "Test Person")
+            self.assertEqual(daemon.CONFIG["instance_name"], "test-person")
+            self.assertFalse(daemon.CONFIG["notifications"])
+            saved = json.loads(tmp.read_text())
+            self.assertEqual(saved["display_name"], "Test Person")
+            self.assertEqual(saved["instance_name"], "test-person")
+            # Broker left blank → local-only, no worker
+            self.assertIsNone(daemon.BROKER_WORKER)
+        finally:
+            daemon.CONFIG_FILE = orig
+
+    def test_settings_rejects_bad_url(self):
+        code, body = self._request("POST", "/api/v1/ui/settings", data={"broker_url": "not-a-url"})
+        self.assertEqual(code, 400)
+        self.assertIn("http", body["error"])
+
+    def test_settings_blank_token_keeps_existing(self):
+        import tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mkdtemp()) / "config.json"
+        orig = daemon.CONFIG_FILE
+        daemon.CONFIG_FILE = tmp
+        daemon.CONFIG["broker_token"] = "keep-me"
+        try:
+            code, _ = self._request("POST", "/api/v1/ui/settings", data={"display_name": "X", "broker_token": ""})
+            self.assertEqual(code, 200)
+            self.assertEqual(daemon.CONFIG["broker_token"], "keep-me")
+        finally:
+            daemon.CONFIG_FILE = orig
+
+    def test_settings_test_connection_bad_server(self):
+        code, body = self._request("POST", "/api/v1/ui/settings/test", data={"broker_url": "http://127.0.0.1:1"})
+        self.assertEqual(code, 200)
+        self.assertFalse(body["ok"])
+        self.assertIn("error", body)
+
 if __name__ == "__main__":
     unittest.main()
