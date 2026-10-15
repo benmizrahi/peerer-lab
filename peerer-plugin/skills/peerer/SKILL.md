@@ -7,6 +7,15 @@ description: Send tasks, messages, code reviews, or questions to peer Antigravit
 
 Peerer allows this Antigravity instance to communicate, delegate tasks, and collaborate with other Antigravity instances.
 
+## Opening the Peerer panel inside Antigravity
+
+When the user asks to see/open Peerer (the panel, the mesh, peers, shared sessions), emit this pill —
+it opens the panel in Antigravity's side pane. **Never** open the daemon URL in a browser instead.
+
+```markdown
+[Open Peerer panel](sidecar://peerer/peerer/)
+```
+
 ## Core Capabilities
 
 1. **List & Ping Peers**: Inspect registered peer instances and check their online status.
