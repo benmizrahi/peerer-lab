@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-15
+
 ### Added
 - **Real session sharing.** *Share Session* now sends a portable copy of a conversation — its artifacts, uploaded files, and a readable transcript digest (`SESSION.md`) — packed into a size-budgeted zip inside the peer message. The receiver gets it under `~/Peerer Shared/<Sender>/<title>/`, a card in the panel listing the files, **Open with Antigravity** (starts a conversation whose agent reads the session) and **Show files**. Only what the sender explicitly shares ever leaves a machine.
 - Session picker in the share dialog (recent sessions, current one preselected, artifact count/size, optional note, transcript on/off).
@@ -42,5 +44,6 @@ First public release.
 - Broker and peer tokens are stored only in the git-ignored `config.json`; the settings API never returns a token in full.
 - Settings endpoint accepts only user-facing keys (`display_name`, `instance_name`, `broker_url`, `broker_token`, `notifications`).
 
-[Unreleased]: https://github.com/benmizrahi/peerer-lab/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.0...HEAD
 [1.0.0]: https://github.com/benmizrahi/peerer-lab/releases/tag/v1.0.0
+[1.1.0]: https://github.com/benmizrahi/peerer-lab/compare/v1.0.0...v1.1.0
