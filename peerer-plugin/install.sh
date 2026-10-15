@@ -122,14 +122,29 @@ ln -sfn "$PLUGIN_DIR/bin/peerer"     "$BIN_DIR/peerer"
 ok "Linked plugin, skill, and CLI"
 
 # ---------------------------------------------------------------------------
-# 4. (Re)start the sidecar daemon
+# 4. Self-test: can the daemon boot and serve the panel on this machine?
+# ---------------------------------------------------------------------------
+CHECK_ERR="$(mktemp)"
+if CHECK_OUT=$(cd "$PLUGIN_DIR/sidecars/peerer" && MOCK_AGENTAPI=1 python3 daemon.py --check 2>"$CHECK_ERR"); then
+  SUMMARY=$(printf '%s' "$CHECK_OUT" | python3 -c 'import json,sys
+d=json.loads(sys.stdin.read().strip().splitlines()[-1])
+print("(v%s, you are %s)" % (d.get("version"), d.get("identity")))' 2>/dev/null || true)
+  ok "Daemon self-test passed ${SUMMARY}"
+else
+  warn "Daemon self-test FAILED — the panel will not appear until this is fixed:"
+  { printf '%s\n' "$CHECK_OUT"; grep -vE 'GET /|POST /' "$CHECK_ERR"; } | tail -n 15 | sed 's/^/      /'
+fi
+rm -f "$CHECK_ERR"
+
+# ---------------------------------------------------------------------------
+# 5. (Re)start the sidecar daemon
 # ---------------------------------------------------------------------------
 pkill -f "sidecars/peerer/daemon.py" 2>/dev/null || pkill -f "daemon.py" 2>/dev/null || true
 touch "$PLUGIN_DIR/sidecars/peerer/sidecar.json"
 ok "Sidecar reloaded"
 
 # ---------------------------------------------------------------------------
-# 5. Done
+# 6. Done
 # ---------------------------------------------------------------------------
 echo
 bold "Peerer installed"
@@ -139,7 +154,6 @@ echo "  Config : $CONFIG_FILE"
 echo
 echo "  Next steps:"
 echo "    • Reload Antigravity (⌘⇧P → “Reload Window”) if the panel doesn't appear"
-echo "    • Open the “Mesh & Activity” panel from the Extensions menu"
 echo "    • Verify:  peerer health   |   peerer list"
 if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
   warn "$BIN_DIR is not on your PATH. Add:  export PATH=\"\$HOME/.local/bin:\$PATH\""

@@ -72,10 +72,14 @@ the panel is closed.
 
 | What you see | What to do |
 |---|---|
-| The panel isn't in the Extensions menu | Quit Antigravity completely (⌘Q) and open it again. |
+| The panel isn't in the Extensions menu | Quit Antigravity completely (⌘Q) and open it again — new plugins are only picked up on launch. If it's still missing, run the installer again and look for a line starting with **Daemon self-test**; if it says FAILED, the lines under it are the reason. |
+| The panel opens but is empty / says "Not connected to a server" | That's expected on a fresh install. Click **Set up** (or the ⚙️ icon), paste the server address and token you were given, click **Test connection**, then **Save**. You don't need a server to use Peerer on the same Wi-Fi/LAN. |
 | “No other peers online” | That's normal if nobody else has installed Peerer yet — or if you skipped the broker address and you're not on the same network. Ask the person who shared Peerer for the broker address, then run the installer again. |
 | No Mac notifications | Open **System Settings → Notifications**, find **Script Editor**, and switch it on. |
 | A window asked to install “command line developer tools” | Click **Install**, wait for it to finish, then run the installer again. |
 
-Still stuck? Take a screenshot of the window and send it to whoever shared
-Peerer with you — it has everything they need to help.
+Still stuck? Open **Terminal** and paste this, then send the output to whoever shared Peerer with you:
+
+```bash
+tail -n 40 ~/.gemini/antigravity/sidecar_data/peerer/peerer/logs/sidecar.log
+```

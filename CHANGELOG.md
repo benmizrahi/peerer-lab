@@ -6,6 +6,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 ## [Unreleased]
 
 ### Fixed
+- Fresh installs without a server: onboarding is now driven by daemon state (no browser storage) — the panel shows a "Not connected" banner, a *Set up server* call-to-action, and opens Settings automatically.
+- Broker/identity failures can no longer prevent the panel from starting (daemon always serves the UI; falls back to local-only).
+- Installer runs a daemon self-test (`daemon.py --check`) and prints the real error if the panel wouldn't come up.
 - Panel showed your own machine (`local-node`, a loopback entry in `peers.json`) as a peer; loopback entries are now excluded.
 - Peers, message senders/targets, toasts, and the agent prompt header now show display names (e.g. "Ben Mizrahi") instead of peer IDs. Outgoing messages carry `metadata.sender_name`.
 

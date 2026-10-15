@@ -601,6 +601,21 @@
       padding-top: 2px;
     }
 
+    .setup-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 7px 12px;
+      font-size: 11.5px;
+      color: var(--text);
+      background: var(--blue-container);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .setup-banner .btn-modal { white-space: nowrap; }
+
     .btn-icon.active {
       background: var(--blue-container);
       color: var(--blue);
@@ -657,11 +672,26 @@
     </div>
   </header>
 
+  <!-- Not-connected banner (shown until a server is configured) -->
+  <div class="setup-banner" id="setup-banner" style="display: none;">
+    <span>Not connected to a server — you'll only see peers on your local network.</span>
+    <button type="button" class="btn-modal primary" onclick="toggleSettings(true)">Set up</button>
+  </div>
+
   <!-- Chat Messages Stream -->
   <main class="chat-stream" id="chat-stream">
     <div class="empty-state" id="empty-state">
-      <div>Peerer Mesh</div>
-      <div style="font-size: 11px; margin-top: 2px;">Share sessions, code, or messages with active peers.</div>
+      <div id="empty-default">
+        <div>Peerer Mesh</div>
+        <div style="font-size: 11px; margin-top: 2px;">Share sessions, code, or messages with active peers.</div>
+      </div>
+      <div id="empty-setup" style="display: none;">
+        <div style="color: var(--text); font-weight: 500;">Welcome to Peerer</div>
+        <div style="font-size: 11px; margin: 4px 0 10px;">
+          To see other people, enter the server address and token you were given.
+        </div>
+        <button type="button" class="btn-modal primary" onclick="toggleSettings(true)">Set up server</button>
+      </div>
     </div>
     <div id="messages-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
   </main>
@@ -744,6 +774,7 @@
 
   <script>
     let appState = { local_node: {}, peers: [], inbox: [], outbox: [] };
+    let onboardingShown = false;
     let selectedTarget = 'all';
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -903,6 +934,17 @@
 
       // Render Messages
       renderMessages(inbox, outbox);
+
+      // Onboarding — driven by server state, no browser storage needed
+      const configured = !!local.broker_url;
+      const hasActivity = inbox.length > 0 || outbox.length > 0;
+      document.getElementById('setup-banner').style.display = (!configured && !settingsOpen) ? 'flex' : 'none';
+      document.getElementById('empty-default').style.display = configured ? '' : 'none';
+      document.getElementById('empty-setup').style.display = configured ? 'none' : '';
+      if (!configured && !hasActivity && activePeers.length === 0 && !onboardingShown) {
+        onboardingShown = true;
+        toggleSettings(true);
+      }
     }
 
     function renderMessages(inbox, outbox) {
@@ -1080,7 +1122,7 @@
     }
 
     // ---------------- Settings ----------------
-    let settingsOpen = false;
+    var settingsOpen = false;
     let settingsLoaded = null;
 
     function toggleSettings(force) {
@@ -1089,6 +1131,9 @@
       document.getElementById('chat-stream').style.display = settingsOpen ? 'none' : 'flex';
       document.getElementById('input-wrap').style.display = settingsOpen ? 'none' : 'block';
       document.getElementById('settings-btn').classList.toggle('active', settingsOpen);
+      const banner = document.getElementById('setup-banner');
+      if (settingsOpen) banner.style.display = 'none';
+      else if (!(appState.local_node || {}).broker_url) banner.style.display = 'flex';
       if (settingsOpen) loadSettings();
     }
 
@@ -1186,17 +1231,6 @@
         btn.disabled = false;
       }
     }
-
-    // First run: open settings automatically when no server is configured
-    (async () => {
-      try {
-        const s = await (await fetch('/api/v1/ui/settings')).json();
-        if (!s.broker_url && !localStorage.getItem('peerer.settingsSeen')) {
-          localStorage.setItem('peerer.settingsSeen', '1');
-          toggleSettings(true);
-        }
-      } catch (_) {}
-    })();
 
     // Polling loop
     refreshState();

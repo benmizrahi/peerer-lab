@@ -161,7 +161,10 @@ def load_configuration() -> Dict[str, Any]:
 
     # Fill identity from the user's profile when not configured
     if not defaults.get("display_name") or not defaults.get("instance_name"):
-        prof = detect_profile()
+        try:
+            prof = detect_profile()
+        except Exception:
+            prof = {"name": os.getenv("USER") or "antigravity-user", "email": "", "source": ""}
         if not defaults.get("display_name"):
             defaults["display_name"] = prof["name"]
         if not defaults.get("instance_name"):
@@ -869,8 +872,11 @@ def main():
     logger.info("Identity: %s (peer_id: %s)", CONFIG.get("display_name"), CONFIG.get("instance_name"))
     logger.info("agentapi path: %s", AGENTAPI_PATH or "NOT FOUND (set MOCK_AGENTAPI=1 for tests)")
 
-    # Start Cloud Run broker worker if configured
-    start_broker_worker()
+    # Start Cloud Run broker worker if configured (never fatal — the UI must come up regardless)
+    try:
+        start_broker_worker()
+    except Exception as e:
+        logger.error("Broker worker failed to start; continuing in local-only mode: %s", e)
 
     runtime_file = Path(__file__).parent / "runtime.json"
     try:
@@ -896,5 +902,33 @@ def main():
         logger.info("Daemon stopped.")
 
 
+def self_check() -> int:
+    """Boot the HTTP server on an ephemeral port, hit /health, and exit. Used by the installer."""
+    import socket
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = ThreadedHTTPServer(("127.0.0.1", port), PeerBridgeHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
+            ui_ok = r.status == 200 and b"<html" in r.read(2048).lower()
+        print(json.dumps({"ok": data.get("status") == "ok" and ui_ok, "version": data.get("version"),
+                          "identity": CONFIG.get("display_name"), "peer_id": CONFIG.get("instance_name"),
+                          "broker_configured": bool(CONFIG.get("broker_url")), "ui": ui_ok}))
+        return 0 if (data.get("status") == "ok" and ui_ok) else 1
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+        return 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 if __name__ == "__main__":
+    if "--check" in sys.argv:
+        raise SystemExit(self_check())
     main()
