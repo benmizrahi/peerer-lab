@@ -268,6 +268,7 @@ def dispatch_peer_message(
                 "session_title": shared_session["title"],
                 "files": shared_session["files"],
                 "skipped": shared_session["skipped"],
+                "preview": shared_session.get("preview", ""),
             })
             logger.info("Unpacked shared session from %s -> %s", sender, shared_session["local_path"])
         except Exception as e:
@@ -726,6 +727,30 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     logger.error("Error reading web index: %s", e)
             self._send_html(HTTPStatus.OK, "<h1>Peerer Mesh Running</h1><p>Web dashboard template missing.</p>")
+            return
+
+        # Read a received file for in-panel preview (sandboxed to ~/Peerer Shared)
+        if path == "/api/v1/ui/file":
+            from urllib.parse import parse_qs, unquote
+            q = parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            target = unquote((q.get("path") or [""])[0])
+            p = Path(target)
+            if not target or not sessions.is_within_shared_root(target) or not p.is_file():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Only files under ~/Peerer Shared can be previewed"}); return
+            import mimetypes, base64
+            mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+            size = p.stat().st_size
+            if mime.startswith("image/") and size <= 3_000_000:
+                self._send_json(HTTPStatus.OK, {"name": p.name, "mime": mime, "bytes": size,
+                                                "image_b64": base64.b64encode(p.read_bytes()).decode("ascii")}); return
+            if size > 1_500_000:
+                self._send_json(HTTPStatus.OK, {"name": p.name, "mime": mime, "bytes": size, "too_large": True}); return
+            try:
+                text = p.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                self._send_json(HTTPStatus.OK, {"name": p.name, "mime": mime, "bytes": size, "binary": True}); return
+            self._send_json(HTTPStatus.OK, {"name": p.name, "mime": mime, "bytes": size, "text": text,
+                                            "markdown": p.suffix.lower() in (".md", ".markdown")})
             return
 
         # Local sessions the user can share (most recent first)

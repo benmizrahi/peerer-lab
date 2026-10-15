@@ -339,6 +339,13 @@ def unpack_bundle(bundle_b64: str, sender_name: str, conv_id: str) -> Dict[str, 
 
     files = [{"path": f["path"], "bytes": f["bytes"]} for f in manifest.get("files", [])] or \
             [{"path": i.filename, "bytes": i.file_size} for i in zf.infolist() if not i.is_dir()]
+    preview = ""
+    try:
+        md = (dest / "SESSION.md").read_text(encoding="utf-8")
+        body = md.split("---", 2)[-1] if "---" in md else md
+        preview = re.sub(r"\s+", " ", re.sub(r"[#>*`]+", "", body)).strip()[:280]
+    except Exception:
+        pass
     return {
         "local_path": str(dest),
         "title": title,
@@ -346,6 +353,7 @@ def unpack_bundle(bundle_b64: str, sender_name: str, conv_id: str) -> Dict[str, 
         "skipped": manifest.get("skipped", []),
         "has_transcript": any(f["path"] == "SESSION.md" for f in files),
         "code": manifest.get("code"),
+        "preview": preview,
     }
 
 

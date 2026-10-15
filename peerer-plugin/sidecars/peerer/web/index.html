@@ -705,6 +705,83 @@
 
     .msg-actions { display: flex; gap: 6px; margin-top: 6px; }
 
+    .viewer {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .viewer-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-bright);
+      flex-shrink: 0;
+    }
+
+    .viewer-head .spacer { flex: 1; }
+
+    .viewer-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      flex-shrink: 0;
+    }
+
+    .viewer-tab {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--text-muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 2px 9px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .viewer-tab.active { color: var(--blue); border-color: var(--blue); }
+
+    .viewer-body {
+      flex: 1;
+      overflow: auto;
+      padding: 12px 16px 24px;
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: var(--text);
+    }
+
+    .viewer-body h1 { font-size: 15px; margin: 6px 0 10px; color: var(--text-bright); }
+    .viewer-body h2 { font-size: 13px; margin: 16px 0 6px; color: var(--text-bright); }
+    .viewer-body h3 { font-size: 12.5px; margin: 12px 0 4px; color: var(--text-bright); }
+    .viewer-body p { margin: 6px 0; }
+    .viewer-body ul { margin: 4px 0 4px 18px; }
+    .viewer-body hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+    .viewer-body blockquote { border-left: 2px solid var(--border); margin: 6px 0; padding: 2px 10px; color: var(--text-muted); }
+    .viewer-body code { font-family: var(--mono); font-size: 11px; background: rgba(0,0,0,0.3); padding: 1px 4px; border-radius: 3px; }
+    .viewer-body pre { background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; overflow: auto; }
+    .viewer-body pre code { background: none; padding: 0; }
+    .viewer-body img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); }
+    .viewer-body .turn-user { border-left: 2px solid var(--blue); padding-left: 10px; margin: 14px 0 6px; }
+
+    .session-preview {
+      font-size: 11.5px;
+      color: var(--text);
+      opacity: 0.9;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
     .setup-banner {
       display: flex;
       align-items: center;
@@ -876,6 +953,20 @@
         </svg>
       </button>
     </form>
+  </div>
+
+  <!-- Session Viewer (full pane) -->
+  <div id="viewer" class="viewer" style="display: none;">
+    <div class="viewer-head">
+      <button class="btn-icon" onclick="closeViewer()" title="Back">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <span id="viewer-title">Session</span>
+      <span class="spacer"></span>
+      <button class="btn-modal" onclick="openShared(viewerState.current)" title="Open this file in its default app">Open externally</button>
+    </div>
+    <div class="viewer-tabs" id="viewer-tabs"></div>
+    <div class="viewer-body" id="viewer-body"></div>
   </div>
 
   <!-- Share Session Modal -->
@@ -1164,16 +1255,18 @@
                     ${(meta.skipped || []).length ? ' · ' + meta.skipped.length + ' skipped (too large)' : ''}
                   </div>
                   ${meta.note ? `<div style="font-size: 11.5px;">${escapeHtml(meta.note)}</div>` : ''}
+                  ${!isSelf && meta.preview ? `<div class="session-preview">${escapeHtml(meta.preview)}</div>` : ''}
                   ${meta.unpack_error ? `<div class="field-status err">Could not unpack: ${escapeHtml(meta.unpack_error)}</div>` : ''}
                   ${!isSelf && meta.local_path ? `
                     <div class="session-files">
                       ${(meta.files || []).map(f => `
-                        <div class="session-file" title="Open" onclick="openShared('${escapeHtml(meta.local_path)}/${escapeHtml(f.path)}')">
+                        <div class="session-file" title="View" onclick='openViewer(${JSON.stringify(meta.local_path)}, ${JSON.stringify(meta.files || [])}, ${JSON.stringify(meta.session_title || "Shared session")}, ${JSON.stringify(f.path)})'>
                           <span>${escapeHtml(f.path)}</span><span>${fmtBytes(f.bytes)}</span>
                         </div>`).join('')}
                     </div>
                     <div class="session-actions">
-                      <button class="btn-modal primary" onclick="openSharedWithAgent('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}')">Open with Antigravity</button>
+                      <button class="btn-modal primary" onclick='openViewer(${JSON.stringify(meta.local_path)}, ${JSON.stringify(meta.files || [])}, ${JSON.stringify(meta.session_title || "Shared session")})'>View session</button>
+                      <button class="btn-modal" onclick="openSharedWithAgent('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}')">Open with Antigravity</button>
                       <button class="btn-modal" onclick="openShared('${escapeHtml(meta.local_path)}')">Show files</button>
                       <button class="btn-modal" title="Copy a prompt to paste into any chat" onclick="copyPrompt('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}')">Copy prompt</button>
                       ${meta.code && !meta.code.error && (meta.code.dirty_files || meta.code.untracked_files || meta.code.ahead) ? `
@@ -1267,6 +1360,75 @@ ${meta.code.dirty_files || 0} changed · ${meta.code.untracked_files || 0} new${
       seenInboxIds.clear(); freshIds = new Set(); unreadCount = 0; updateUnreadBadge();
       showToast('Chat cleared', '');
       refreshState();
+    }
+
+    // ---------------- Session viewer ----------------
+    const viewerState = { root: '', files: [], current: '' };
+
+    function renderMarkdown(md) {
+      // Small, safe markdown subset: headings, fences, inline code, bold/italic, lists, quotes, hr, links
+      const esc = escapeHtml;
+      const blocks = md.split(/```/);
+      let out = '';
+      blocks.forEach((b, i) => {
+        if (i % 2 === 1) {                       // fenced code
+          const nl = b.indexOf('\n');
+          const code = nl >= 0 ? b.slice(nl + 1) : b;
+          out += `<pre><code>${esc(code.replace(/\n$/, ''))}</code></pre>`;
+          return;
+        }
+        const lines = b.split('\n');
+        let inList = false, para = [];
+        const flush = () => { if (para.length) { out += `<p>${inline(para.join(' '))}</p>`; para = []; } };
+        const inline = (t) => esc(t)
+          .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+          .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>')
+          .replace(/`([^`]+)`/g, '<code>$1</code>')
+          .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+        for (const raw of lines) {
+          const l = raw.replace(/\s+$/, '');
+          let m;
+          if (/^\s*$/.test(l)) { flush(); if (inList) { out += '</ul>'; inList = false; } continue; }
+          if ((m = l.match(/^(#{1,3})\s+(.*)/))) { flush(); if (inList) { out += '</ul>'; inList = false; }
+            const lvl = m[1].length; const txt = m[2];
+            const cls = /^🧑/.test(txt) ? ' class="turn-user"' : '';
+            out += `<h${lvl}${cls}>${inline(txt)}</h${lvl}>`; continue; }
+          if (/^---+$/.test(l)) { flush(); out += '<hr/>'; continue; }
+          if ((m = l.match(/^>\s?(.*)/))) { flush(); out += `<blockquote>${inline(m[1])}</blockquote>`; continue; }
+          if ((m = l.match(/^\s*[-*]\s+(.*)/))) { flush(); if (!inList) { out += '<ul>'; inList = true; } out += `<li>${inline(m[1])}</li>`; continue; }
+          para.push(l);
+        }
+        flush(); if (inList) out += '</ul>';
+      });
+      return out;
+    }
+
+    async function openViewer(root, files, title, start) {
+      viewerState.root = root; viewerState.files = files || []; viewerState.current = '';
+      document.getElementById('viewer-title').textContent = title || 'Shared session';
+      document.getElementById('viewer').style.display = 'flex';
+      const tabs = document.getElementById('viewer-tabs');
+      tabs.innerHTML = viewerState.files.map(f =>
+        `<span class="viewer-tab" data-path="${escapeHtml(root + '/' + f.path)}" onclick="showFile(this.dataset.path)">${escapeHtml(f.path)}</span>`).join('');
+      const first = start || (viewerState.files.find(f => f.path === 'SESSION.md') || viewerState.files[0] || {}).path;
+      if (first) showFile(root + '/' + first);
+    }
+
+    function closeViewer() { document.getElementById('viewer').style.display = 'none'; }
+
+    async function showFile(path) {
+      viewerState.current = path;
+      document.querySelectorAll('.viewer-tab').forEach(t => t.classList.toggle('active', t.dataset.path === path));
+      const body = document.getElementById('viewer-body');
+      body.innerHTML = '<span style="color: var(--text-muted)">Loading…</span>';
+      try {
+        const r = await (await fetch('/api/v1/ui/file?path=' + encodeURIComponent(path))).json();
+        if (r.error) { body.textContent = r.error; return; }
+        if (r.image_b64) { body.innerHTML = `<img src="data:${r.mime};base64,${r.image_b64}" alt="${escapeHtml(r.name)}"/>`; return; }
+        if (r.too_large || r.binary) { body.innerHTML = `<p style="color: var(--text-muted)">${escapeHtml(r.name)} (${fmtBytes(r.bytes)}) can't be previewed here — use <b>Open externally</b>.</p>`; return; }
+        body.innerHTML = r.markdown ? renderMarkdown(r.text) : `<pre><code>${escapeHtml(r.text)}</code></pre>`;
+        body.scrollTop = 0;
+      } catch (e) { body.textContent = 'Could not load file.'; }
     }
 
     // ---------------- Threads ----------------

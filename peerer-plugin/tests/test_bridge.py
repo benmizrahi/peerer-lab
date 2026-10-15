@@ -257,6 +257,19 @@ class TestPeererBridge(unittest.TestCase):
             sessions.SHARED_ROOT = orig_root
             shutil.rmtree(shared_root.parent, ignore_errors=True)
 
+    def test_ui_file_preview_sandboxed(self):
+        import sessions, tempfile, shutil, urllib.parse
+        root = Path(tempfile.mkdtemp()) / "Peerer Shared"; (root / "X").mkdir(parents=True)
+        (root / "X" / "SESSION.md").write_text("# Hi\n\nbody")
+        orig = sessions.SHARED_ROOT; sessions.SHARED_ROOT = root
+        try:
+            code, body = self._request("GET", "/api/v1/ui/file?path=" + urllib.parse.quote(str(root / "X" / "SESSION.md")))
+            self.assertEqual(code, 200); self.assertTrue(body["markdown"]); self.assertIn("body", body["text"])
+            code, body = self._request("GET", "/api/v1/ui/file?path=" + urllib.parse.quote("/etc/hosts"))
+            self.assertEqual(code, 403)
+        finally:
+            sessions.SHARED_ROOT = orig; shutil.rmtree(root.parent, ignore_errors=True)
+
     def test_unpack_rejects_path_traversal(self):
         import sessions, io, zipfile, base64
         buf = io.BytesIO()

@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+### Added
+- **View session in the panel.** Received sessions open in a full-pane viewer: the transcript (`SESSION.md`) rendered as markdown with user/agent turns, tabs for every artifact (markdown, text, images), and *Open externally*. Cards also show a 3-line preview of the conversation. No agent (or quota) needed to read what was shared.
+- `GET /api/v1/ui/file` (sandboxed to `~/Peerer Shared`).
+
 ## [1.2.0] - 2026-10-15
 
 ### Added
