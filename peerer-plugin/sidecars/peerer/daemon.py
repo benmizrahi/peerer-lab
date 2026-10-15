@@ -768,6 +768,13 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"ok": False, "error": f"Could not reach server: {e}"})
             return
 
+        # Clear the panel feed (in-memory inbox/outbox). Files under ~/Peerer Shared are untouched.
+        if path == "/api/v1/ui/clear":
+            n = len(INBOX) + len(OUTBOX)
+            INBOX.clear(); OUTBOX.clear()
+            self._send_json(HTTPStatus.OK, {"ok": True, "cleared": n})
+            return
+
         # Share a local session (artifacts + transcript digest) with a peer
         if path == "/api/v1/ui/share-session":
             try:

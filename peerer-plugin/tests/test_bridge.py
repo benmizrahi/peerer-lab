@@ -174,6 +174,13 @@ class TestPeererBridge(unittest.TestCase):
         finally:
             peer_cli.load_registry = orig
 
+    def test_ui_clear(self):
+        daemon.INBOX.append({"id": "x", "received_at": 0, "sender": "a", "title": "t", "content": "c", "metadata": {}})
+        code, body = self._request("POST", "/api/v1/ui/clear")
+        self.assertEqual(code, 200)
+        self.assertEqual(len(daemon.INBOX), 0)
+        self.assertEqual(len(daemon.OUTBOX), 0)
+
     # ---------------- Session sharing ----------------
 
     def _fake_session(self):
