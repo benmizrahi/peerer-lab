@@ -42,6 +42,9 @@ def load_config() -> Dict[str, Any]:
                 return json.load(f)
         except Exception:
             pass
+    return {}
+
+
 RUNTIME_PATH = CONFIG_PATH.parent / "runtime.json"
 
 

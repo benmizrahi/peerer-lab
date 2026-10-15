@@ -52,7 +52,8 @@ class TestPeererCLI(unittest.TestCase):
             "--token", TEST_TOKEN,
             "--sender", "cli-tester"
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, f"peerer send failed:\n{res.stderr}")
         out = json.loads(res.stdout)
         self.assertEqual(out["status"], "success")
         self.assertEqual(out["response"]["status"], "accepted")
@@ -69,6 +70,21 @@ class TestPeererCLI(unittest.TestCase):
         out = json.loads(res.stdout)
         self.assertTrue(out["reachable"])
         self.assertTrue(out["details"]["pong"])
+
+    def test_send_module_works_without_config(self):
+        """Fresh install / CI: no config.json or peers.json must not crash."""
+        scripts = repo_root / "skills" / "peerer" / "scripts"
+        sys.path.insert(0, str(scripts))
+        import importlib, send as send_mod
+        importlib.reload(send_mod)
+        orig = send_mod.CONFIG_PATH
+        send_mod.CONFIG_PATH = Path("/nonexistent/config.json")
+        try:
+            self.assertEqual(send_mod.load_config(), {})
+            url, token, is_broker = send_mod.resolve_peer_endpoint("http://127.0.0.1:1")
+            self.assertEqual((url, token, is_broker), ("http://127.0.0.1:1", "", False))
+        finally:
+            send_mod.CONFIG_PATH = orig
 
 if __name__ == "__main__":
     unittest.main()
