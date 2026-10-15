@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+### Added
+- **Collaboration threads.** A thread binds your conversation to a peer's conversation. Messages on a thread are delivered with `agentapi send-message` *into the bound conversation* on each side instead of spawning new ones — both people (and both agents) keep working where they already are. Threads are created automatically on first message/share and persisted in `threads.json`.
+- **Agents can reply to each other.** Incoming thread messages end with `peerer reply --thread <id> "…" [--attach file]`; the receiving agent uses it to answer, ask, or hand files back. `peerer threads` lists threads. Attachments land in `~/Peerer Shared/<Sender>/attachments/`.
+- **Code travels with sessions.** Sharing a session from a git workspace also ships `repo.json` (origin/branch/HEAD), `changes.patch` (uncommitted work), `untracked/` (new files) and `commits.patch` (unpushed commits). The receiver gets **Apply to my checkout**: finds (or clones) the same repo, creates a `peerer/<thread>-<sha>` branch, applies everything, opens the folder, and tells the agent to review. Dirty checkouts are refused, never overwritten.
+- Panel: thread chips on messages (click = reply in that thread), reply bar, *Reply* / *Apply to my checkout* buttons on session cards, code summary box, "include my code changes" toggle in the share dialog.
+- Endpoints: `POST /api/v1/threads/reply`, `POST /api/v1/threads/read`, `POST /api/v1/ui/apply-patch`; `threads` in `/ui/state`.
+
 ## [1.1.2] - 2026-10-15
 
 ### Fixed

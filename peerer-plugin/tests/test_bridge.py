@@ -265,6 +265,118 @@ class TestPeererBridge(unittest.TestCase):
         with self.assertRaises(ValueError):
             sessions.unpack_bundle(base64.b64encode(buf.getvalue()).decode(), "Mallory", "")
 
+    # ---------------- Threads ----------------
+
+    def _isolated_threads(self):
+        import tempfile, threads
+        orig = threads.THREADS_FILE
+        threads.THREADS_FILE = Path(tempfile.mkdtemp()) / "threads.json"
+        threads._THREADS.clear(); threads._LOADED = False
+        return orig
+
+    def test_thread_binds_both_sides(self):
+        """Inbound msg with thread_id+reply_to creates a thread; later msgs route into my bound conversation."""
+        import threads
+        orig = self._isolated_threads()
+        try:
+            # 1) first contact from alice: no thread yet → new-conversation (mocked), thread learns their_conv
+            code, body = self._request("POST", "/api/v1/messages", data={
+                "sender": "alice", "title": "hi", "content": "hello",
+                "metadata": {"thread_id": "t_0123abcd", "reply_to": "aaaaaaaa-1111-2222-3333-444444444444", "sender_name": "Alice"}
+            }, token=TEST_TOKEN)
+            self.assertEqual(code, 202)
+            t = threads.get("t_0123abcd")
+            self.assertEqual(t["peer"], "alice")
+            self.assertEqual(t["their_conv"], "aaaaaaaa-1111-2222-3333-444444444444")
+            self.assertEqual(t["unread"], 1)
+            # 2) I reply from my conversation via ui/send → outgoing carries thread_id + reply_to, binds my_conv
+            code, body = self._request("POST", "/api/v1/ui/send", data={
+                "peer": "alice", "message": "hey back", "thread_id": "t_0123abcd",
+                "my_conversation_id": "bbbbbbbb-1111-2222-3333-444444444444"
+            })
+            t = threads.get("t_0123abcd")
+            self.assertEqual(t["my_conv"], "bbbbbbbb-1111-2222-3333-444444444444")
+            out = daemon.OUTBOX[-1]
+            self.assertEqual(out["thread_id"], "t_0123abcd")
+            # 3) alice's next message (no conversation_id) must be routed into my bound conversation
+            code, body = self._request("POST", "/api/v1/messages", data={
+                "sender": "alice", "title": "again", "content": "more",
+                "metadata": {"thread_id": "t_0123abcd", "reply_to": "aaaaaaaa-1111-2222-3333-444444444444"}
+            }, token=TEST_TOKEN)
+            self.assertEqual(code, 202)
+            self.assertEqual(daemon.INBOX[-1]["conversation_id"], "bbbbbbbb-1111-2222-3333-444444444444")
+            self.assertEqual(body.get("mode"), "send-message")
+            # state exposes threads; read clears unread
+            code, st = self._request("GET", "/api/v1/ui/state")
+            self.assertTrue(any(x["id"] == "t_0123abcd" for x in st["threads"]))
+            self._request("POST", "/api/v1/threads/read", data={"thread_id": "t_0123abcd"})
+            self.assertEqual(threads.get("t_0123abcd")["unread"], 0)
+        finally:
+            threads.THREADS_FILE = orig; threads._THREADS.clear(); threads._LOADED = False
+
+    def test_thread_reply_endpoint_with_attachment(self):
+        import threads, tempfile
+        orig = self._isolated_threads()
+        try:
+            t = threads.upsert(None, peer="bob", peer_name="Bob", my_conv="cccccccc-1111-2222-3333-444444444444",
+                               their_conv="dddddddd-1111-2222-3333-444444444444", title="work")
+            f = Path(tempfile.mkdtemp()) / "notes.txt"; f.write_text("hello")
+            # bob is unreachable → send fails, but the request shape must be right and the outbox records it
+            code, body = self._request("POST", "/api/v1/threads/reply", data={"thread_id": t["id"], "message": "see file", "attachments": [str(f)]})
+            out = daemon.OUTBOX[-1]
+            self.assertEqual(out["thread_id"], t["id"])
+            self.assertEqual(out["metadata"]["attachment_names"], ["notes.txt"])
+            self.assertEqual(out["metadata"]["reply_to"], "cccccccc-1111-2222-3333-444444444444")
+            code, body = self._request("POST", "/api/v1/threads/reply", data={"thread_id": "t_deadbeef", "message": "x"})
+            self.assertEqual(code, 404)
+        finally:
+            threads.THREADS_FILE = orig; threads._THREADS.clear(); threads._LOADED = False
+
+    # ---------------- Code sharing ----------------
+
+    def test_gitshare_capture_and_apply_roundtrip(self):
+        """Sender has uncommitted work → receiver's clone gets a peerer/ branch with it applied."""
+        import gitshare, tempfile, subprocess
+        base = Path(tempfile.mkdtemp())
+        origin = base / "origin.git"; subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
+        def git(repo, *a): return subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True, check=True)
+        sender = base / "sender"; subprocess.run(["git", "clone", "-q", str(origin), str(sender)], check=True)
+        git(sender, "config", "user.email", "t@t"); git(sender, "config", "user.name", "T")
+        (sender / "a.txt").write_text("one\n"); git(sender, "add", "."); git(sender, "commit", "-q", "-m", "init"); git(sender, "push", "-q", "origin", "HEAD:main")
+        git(sender, "checkout", "-q", "-b", "main") if git(sender, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != "main" else None
+        (sender / "a.txt").write_text("one\ntwo\n")            # uncommitted edit
+        (sender / "new.py").write_text("print('new')\n")        # untracked file
+        cap = gitshare.capture(sender)
+        self.assertEqual(cap["repo"]["dirty_files"], 1)
+        self.assertEqual(cap["repo"]["untracked_files"], 1)
+        self.assertIn("+two", cap["patch"])
+        # Fake a received session folder with the capture
+        sess = base / "Peerer Shared" / "T" / "s"; sess.mkdir(parents=True)
+        (sess / "repo.json").write_text(json.dumps(cap["repo"]))
+        (sess / "changes.patch").write_text(cap["patch"])
+        for rel, data in cap["untracked"]:
+            (sess / "untracked" / rel).parent.mkdir(parents=True, exist_ok=True); (sess / "untracked" / rel).write_bytes(data)
+        # Receiver: clean clone of the same origin, registered as known checkout
+        receiver = base / "receiver"; subprocess.run(["git", "clone", "-q", str(origin), str(receiver)], check=True)
+        orig_known = gitshare.KNOWN_REPOS_FILE; gitshare.KNOWN_REPOS_FILE = base / "known.json"
+        try:
+            gitshare.remember_checkout(str(receiver))
+            res = gitshare.apply(sess, thread_id="abc", allow_clone=False)
+            self.assertTrue(res["ok"], res)
+            self.assertTrue(res["branch"].startswith("peerer/abc-"))
+            self.assertEqual((receiver / "a.txt").read_text(), "one\ntwo\n")
+            self.assertTrue((receiver / "new.py").exists())
+            self.assertEqual(git(receiver, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), res["branch"])
+            # dirty checkout is refused
+            res2 = gitshare.apply(sess, thread_id="again", allow_clone=False)
+            self.assertFalse(res2["ok"]); self.assertIn("uncommitted", res2["error"])
+        finally:
+            gitshare.KNOWN_REPOS_FILE = orig_known
+
+    def test_apply_patch_endpoint_sandboxed(self):
+        code, body = self._request("POST", "/api/v1/ui/apply-patch", data={"path": "/tmp"})
+        self.assertEqual(code, 403)
+
     # ---------------- Settings ----------------
 
     def test_detect_profile_returns_name(self):

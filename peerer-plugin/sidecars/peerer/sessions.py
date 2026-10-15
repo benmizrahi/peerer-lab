@@ -129,9 +129,39 @@ def list_sessions(limit: int = 25) -> List[Dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
+# Workspace behind a conversation (via agentapi get-conversation-metadata)
+# --------------------------------------------------------------------------- #
+_WS_CACHE: Dict[str, Optional[str]] = {}
+
+
+def workspace_for(conv_id: str, agentapi_path: Optional[str]) -> Optional[Path]:
+    if conv_id in _WS_CACHE:
+        return Path(_WS_CACHE[conv_id]) if _WS_CACHE[conv_id] else None
+    ws: Optional[str] = None
+    if agentapi_path:
+        try:
+            import subprocess
+            from urllib.parse import unquote, urlparse
+            r = subprocess.run([agentapi_path, "get-conversation-metadata", conv_id], capture_output=True, text=True, timeout=15)
+            d = json.loads(r.stdout or "{}")
+            meta = (d.get("response") or {}).get("conversationMetadata", {}).get("metadata", {})
+            uris = [w.get("workspaceFolderAbsoluteUri") for w in meta.get("workspaces", [])] or meta.get("workspaceUris", [])
+            for u in uris:
+                if u and u.startswith("file://"):
+                    cand = unquote(urlparse(u).path)
+                    if Path(cand).is_dir():
+                        ws = cand
+                        break
+        except Exception:
+            ws = None
+    _WS_CACHE[conv_id] = ws
+    return Path(ws) if ws else None
+
+
+# --------------------------------------------------------------------------- #
 # Building a bundle
 # --------------------------------------------------------------------------- #
-def _transcript_digest(session: Path, title: str, shared_by: str, conv_id: str) -> str:
+def _transcript_digest(session: Path, title: str, shared_by: str, conv_id: str, code: Optional[Dict[str, Any]] = None) -> str:
     """Human-readable SESSION.md: user turns, assistant text, and a one-line note per tool call."""
     lines = [
         f"# {title}",
@@ -143,9 +173,21 @@ def _transcript_digest(session: Path, title: str, shared_by: str, conv_id: str) 
         "> This is a portable digest of the conversation (tool outputs omitted). "
         "Artifacts the session produced are alongside this file.",
         "",
-        "---",
-        "",
     ]
+    if code and not code.get("error"):
+        lines += [
+            "## Code",
+            "",
+            f"- Repository: `{code.get('origin') or '(no remote)'}`",
+            f"- Branch: `{code.get('branch')}` @ `{(code.get('head') or '')[:10]}`"
+            + (f" ({code.get('ahead')} unpushed commit(s) attached)" if code.get("ahead") else ""),
+            f"- Uncommitted changes: {code.get('dirty_files', 0)} file(s) in `changes.patch`, "
+            f"{code.get('untracked_files', 0)} new file(s) in `untracked/`",
+            "",
+        ]
+        if code.get("diffstat"):
+            lines += ["```", code["diffstat"], "```", ""]
+    lines += ["---", ""]
     t = session / ".system_generated" / "logs" / "transcript.jsonl"
     if not t.exists():
         lines.append("_No transcript available._")
@@ -183,10 +225,13 @@ def _transcript_digest(session: Path, title: str, shared_by: str, conv_id: str) 
 
 
 def build_bundle(conv_id: str, shared_by: str, include_transcript: bool = True,
-                 budget: int = DEFAULT_BUNDLE_BUDGET) -> Dict[str, Any]:
+                 budget: int = DEFAULT_BUNDLE_BUDGET, include_code: bool = True,
+                 agentapi_path: Optional[str] = None, workspace: Optional[Path] = None) -> Dict[str, Any]:
     """
     Returns {"bundle_b64", "manifest", "zip_bytes"}; raises FileNotFoundError / ValueError.
     Files are added smallest-first until the budget is hit; the rest are listed as skipped.
+    With include_code, the workspace's git state (repo.json, changes.patch, commits.patch,
+    untracked/) rides along so the receiver can reproduce the sender's working tree.
     """
     session = find_session_dir(conv_id)
     if not session:
@@ -196,9 +241,28 @@ def build_bundle(conv_id: str, shared_by: str, include_transcript: bool = True,
     files = sorted(_artifact_files(session), key=lambda p: p.stat().st_size)
     included: List[Tuple[str, bytes]] = []
     skipped: List[Dict[str, Any]] = []
+    code: Optional[Dict[str, Any]] = None
+
+    if include_code:
+        try:
+            import gitshare
+            ws = workspace or workspace_for(conv_id, agentapi_path)
+            cap = gitshare.capture(ws) if ws else None
+            if cap:
+                code = cap["repo"]
+                code["notes"] = cap["notes"]
+                included.append(("repo.json", json.dumps(cap["repo"], indent=2).encode("utf-8")))
+                if cap["patch"].strip():
+                    included.append(("changes.patch", cap["patch"].encode("utf-8", "replace")))
+                if cap["commits_patch"].strip():
+                    included.append(("commits.patch", cap["commits_patch"].encode("utf-8", "replace")))
+                for rel, data in cap["untracked"]:
+                    included.append((f"untracked/{rel}", data))
+        except Exception as e:  # never let git trouble block a share
+            code = {"error": str(e)}
 
     if include_transcript:
-        included.append(("SESSION.md", _transcript_digest(session, title, shared_by, conv_id).encode("utf-8")))
+        included.append(("SESSION.md", _transcript_digest(session, title, shared_by, conv_id, code).encode("utf-8")))
 
     # Pack incrementally and measure the real compressed size as we go
     def packed_size(items: List[Tuple[str, bytes]]) -> Tuple[int, bytes]:
@@ -219,13 +283,14 @@ def build_bundle(conv_id: str, shared_by: str, include_transcript: bool = True,
         included.append((rel, data))
 
     manifest = {
-        "format": "peerer-session/1",
+        "format": "peerer-session/2",
         "title": title,
         "conversation_id": conv_id,
         "shared_by": shared_by,
         "shared_at": time.time(),
         "files": [{"path": n, "bytes": len(b)} for n, b in included],
         "skipped": skipped,
+        "code": code,
     }
     included.append(("manifest.json", json.dumps(manifest, indent=2).encode("utf-8")))
     size, blob = packed_size(included)
@@ -280,6 +345,7 @@ def unpack_bundle(bundle_b64: str, sender_name: str, conv_id: str) -> Dict[str, 
         "files": files,
         "skipped": manifest.get("skipped", []),
         "has_transcript": any(f["path"] == "SESSION.md" for f in files),
+        "code": manifest.get("code"),
     }
 
 
@@ -298,6 +364,12 @@ def agent_prompt_for_shared_session(sender_label: str, info: Dict[str, Any], not
         f"Location on this machine: {info.get('local_path')}\n"
         f"Files:\n{files}\n"
         + (f"Note from {sender_label}: {note}\n" if note else "")
+        + (f"Code: repository {info['code'].get('origin')} on branch {info['code'].get('branch')} — "
+           f"{info['code'].get('dirty_files', 0)} changed file(s) in changes.patch"
+           + (f", {info['code'].get('ahead')} unpushed commit(s)" if info['code'].get('ahead') else "")
+           + ". The user can apply these to a local checkout with the 'Apply to my checkout' button in the Peerer panel, "
+             "or you can run `git apply changes.patch` in their checkout if asked.\n"
+           if info.get("code") and not info["code"].get("error") else "")
         + "==========================================================\n"
         "Action: Open this shared session for me. Read SESSION.md (the conversation digest) and the "
         "artifacts in that folder, give me a concise summary of what the peer was working on and what "

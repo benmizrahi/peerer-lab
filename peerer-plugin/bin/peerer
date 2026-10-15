@@ -5,6 +5,7 @@ Peerer CLI - Peer-to-Peer Communication for Antigravity Instances
 
 import argparse
 import json
+import urllib.error
 import os
 import sys
 from pathlib import Path
@@ -72,6 +73,55 @@ def cmd_health(args):
         print(f"Error checking health: {e}", file=sys.stderr)
         sys.exit(1)
 
+def _local_daemon_url():
+    """The running daemon's base URL (dynamic sidecar port via runtime.json)."""
+    url = send.get_runtime_url() if hasattr(send, "get_runtime_url") else None
+    return url or "http://127.0.0.1:8950"
+
+
+def _post_local(path, payload):
+    import urllib.request
+    req = urllib.request.Request(_local_daemon_url() + path, data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.getcode(), json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return e.code, {"status": "error", "error": str(e)}
+
+
+def cmd_reply(args):
+    """Reply on a collaboration thread; lands in the peer's bound conversation."""
+    code, body = _post_local("/api/v1/threads/reply", {
+        "thread_id": args.thread, "message": args.message or "",
+        "attachments": args.attach or [], "title": args.title,
+    })
+    print(json.dumps(body, indent=2))
+    if code >= 400 or body.get("status") not in ("success", "ok"):
+        sys.exit(1)
+
+
+def cmd_threads(args):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(_local_daemon_url() + "/api/v1/ui/state", timeout=10) as resp:
+            state = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"Error: daemon not reachable ({e})", file=sys.stderr); sys.exit(1)
+    ts = state.get("threads", [])
+    if args.json:
+        print(json.dumps(ts, indent=2)); return
+    if not ts:
+        print("No threads yet. Send a message or share a session to start one."); return
+    print(f"{'THREAD':<12} {'PEER':<22} {'UNREAD':<7} {'MY CONV':<14} {'THEIR CONV':<14} TITLE")
+    for t in ts:
+        print(f"{t['id']:<12} {(t.get('peer_name') or t['peer'])[:21]:<22} {t.get('unread',0):<7} "
+              f"{(t.get('my_conv') or '-')[:12]:<14} {(t.get('their_conv') or '-')[:12]:<14} {t.get('title','')[:50]}")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="peerer", description="Antigravity Peer Communication Tool (Peerer)")
     parser.add_argument("--version", action="version", version=f"peerer {daemon.VERSION}")
@@ -125,6 +175,17 @@ def main():
     p_inbox.set_defaults(func=cmd_inbox)
 
     # 8. health
+    p_reply = subparsers.add_parser("reply", help="Reply on a collaboration thread (lands in the peer's bound conversation)")
+    p_reply.add_argument("--thread", required=True, help="Thread id, e.g. t_1a2b3c4d (see `peerer threads`)")
+    p_reply.add_argument("--attach", action="append", help="File to attach (repeatable, ≤400KB each)")
+    p_reply.add_argument("--title", help="Optional title")
+    p_reply.add_argument("message", nargs="?", help="Message text")
+    p_reply.set_defaults(func=cmd_reply)
+
+    p_threads = subparsers.add_parser("threads", help="List collaboration threads")
+    p_threads.add_argument("--json", action="store_true")
+    p_threads.set_defaults(func=cmd_threads)
+
     p_health = subparsers.add_parser("health", help="Check local or peer daemon health")
     p_health.add_argument("--peer", help="Peer name or URL (default: local-node)")
     p_health.set_defaults(func=cmd_health)

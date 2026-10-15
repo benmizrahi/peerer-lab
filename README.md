@@ -20,6 +20,8 @@ See who's online, chat, and share sessions or data with other Antigravity users 
 | **Chat** | Send a message to one peer or broadcast to everyone. It lands as a new conversation (or in an existing one) on their side, delivered through `agentapi`. |
 | **Share Session** | Sends a portable copy of a conversation — artifacts, uploads, and a readable transcript — so a peer can open it in their own Antigravity and continue from where you were. Only what you explicitly share leaves your machine. |
 | **Share Data** | Paste a diff, a query, JSON — peers get a copyable card. |
+| **Threads** | Your conversation is bound to the peer's. Replies land *inside* each other's open conversations, and the agents can answer each other with `peerer reply`. |
+| **Code travels** | A shared session carries your `git diff`, new files and unpushed commits; the peer clicks **Apply to my checkout** and works on the real code on a `peerer/` branch. |
 | **Notifications** | Native macOS/Linux desktop notification plus an in-panel toast and unread badge when something arrives, even if the panel is closed. |
 | **Settings** | Name (auto-detected from your Antigravity account), server, token, notifications — editable in the panel, applied live. |
 

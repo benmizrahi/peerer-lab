@@ -655,6 +655,56 @@
       flex-wrap: wrap;
     }
 
+    .thread-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      color: var(--blue);
+      background: var(--blue-container);
+      border-radius: 8px;
+      padding: 1px 7px;
+      margin-left: 2px;
+      cursor: pointer;
+    }
+
+    .reply-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 5px 12px;
+      font-size: 11px;
+      color: var(--text);
+      background: var(--blue-container);
+      border-top: 1px solid var(--border);
+    }
+
+    .reply-bar b { color: var(--blue); font-weight: 500; }
+
+    .reply-bar button {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    .code-box {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--text);
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 4px;
+      padding: 6px 8px;
+      white-space: pre-wrap;
+      max-height: 90px;
+      overflow: auto;
+    }
+
+    .msg-actions { display: flex; gap: 6px; margin-top: 6px; }
+
     .setup-banner {
       display: flex;
       align-items: center;
@@ -802,6 +852,12 @@
     </div>
   </main>
 
+  <!-- Reply-in-thread context -->
+  <div class="reply-bar" id="reply-bar" style="display: none;">
+    <span>Replying in thread with <b id="reply-peer"></b></span>
+    <button type="button" title="Cancel" onclick="setReplyThread(null)">×</button>
+  </div>
+
   <!-- Minimal Floating Rounded Input -->
   <div class="input-wrap" id="input-wrap">
     <form class="input-box" onsubmit="handleSend(event)">
@@ -834,6 +890,10 @@
       <label class="field-check" style="font-size: 11.5px;">
         <input type="checkbox" id="session-transcript" checked />
         <span>Include conversation transcript</span>
+      </label>
+      <label class="field-check" style="font-size: 11.5px;">
+        <input type="checkbox" id="session-code" checked />
+        <span>Include my code changes (git diff + new files)</span>
       </label>
       <input type="text" id="session-note" class="field-input" placeholder="Note for the peer (optional)" />
       <div class="modal-btns" style="align-items: center; justify-content: space-between;">
@@ -1040,6 +1100,7 @@
           dir: 'in',
           sender: (m.metadata && m.metadata.sender_name) || nameOf(m.sender),
           delivery: m.delivery,
+          thread_id: m.thread_id || (m.metadata && m.metadata.thread_id),
           title: m.title,
           content: m.content,
           metadata: m.metadata || {},
@@ -1051,6 +1112,7 @@
           id: m.id,
           dir: 'out',
           sender: 'You',
+          thread_id: m.thread_id || (m.metadata && m.metadata.thread_id),
           target: m.target_name || nameOf(m.target_peer),
           title: m.title,
           content: m.content,
@@ -1084,6 +1146,7 @@
               <span>${escapeHtml(senderName)}</span>
               <span>•</span>
               <span>${formatTime(msg.time)}</span>
+              ${msg.thread_id ? `<span class="thread-chip" title="Collaboration thread ${escapeHtml(msg.thread_id)} — click to reply here" onclick="replyToThread('${escapeHtml(msg.thread_id)}')">⇄ thread${(threadById(msg.thread_id) || {}).unread && !isSelf ? ' · ' + threadById(msg.thread_id).unread : ''}</span>` : ''}
             </div>
             <div class="msg-card">
               ${msg.title && msg.title !== 'Peer Message' && msg.title !== 'Peer Task Request' ? `
@@ -1113,7 +1176,14 @@
                       <button class="btn-modal primary" onclick="openSharedWithAgent('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}')">Open with Antigravity</button>
                       <button class="btn-modal" onclick="openShared('${escapeHtml(meta.local_path)}')">Show files</button>
                       <button class="btn-modal" title="Copy a prompt to paste into any chat" onclick="copyPrompt('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}')">Copy prompt</button>
+                      ${meta.code && !meta.code.error && (meta.code.dirty_files || meta.code.untracked_files || meta.code.ahead) ? `
+                        <button class="btn-modal primary" title="Create a peerer/ branch in your checkout of ${escapeHtml(meta.code.origin || 'this repo')} and apply the changes"
+                                onclick="applyPatch('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}', '${escapeHtml(msg.thread_id || '')}')">Apply to my checkout</button>` : ''}
+                      ${msg.thread_id ? `<button class="btn-modal" onclick="replyToThread('${escapeHtml(msg.thread_id)}')">Reply</button>` : ''}
                     </div>
+                    ${meta.code && !meta.code.error ? `
+                      <div class="code-box">${escapeHtml((meta.code.origin || '(no remote)').replace(/^https?:\/\//, ''))} · ${escapeHtml(meta.code.branch || '')} @ ${escapeHtml((meta.code.head || '').slice(0, 7))}
+${meta.code.dirty_files || 0} changed · ${meta.code.untracked_files || 0} new${meta.code.ahead ? ' · ' + meta.code.ahead + ' unpushed commit(s)' : ''}</div>` : ''}
                     ${msg.delivery === 'error' ? `<div class="field-status err" style="font-size:10.5px;">Couldn't open automatically — use the buttons above.</div>` : ''}
                   ` : ''}
                 </div>
@@ -1151,12 +1221,14 @@
         return;
       }
 
-      for (const t of targets) {
+      const finalTargets = replyThread ? [replyThread.peer] : targets;
+      for (const t of finalTargets) {
         try {
           await fetch('/api/v1/ui/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...payload, peer: t })
+            body: JSON.stringify({ ...payload, peer: t, my_conversation_id: activeConvId,
+                                   thread_id: replyThread ? replyThread.id : undefined })
           });
         } catch (e) {
           console.error('Send error:', e);
@@ -1176,7 +1248,7 @@
 
       dispatch({
         message: text,
-        title: 'Peer Message'
+        title: replyThread ? ('Re: ' + (replyThread.title || 'thread')) : 'Peer Message'
       });
     }
 
@@ -1195,6 +1267,43 @@
       seenInboxIds.clear(); freshIds = new Set(); unreadCount = 0; updateUnreadBadge();
       showToast('Chat cleared', '');
       refreshState();
+    }
+
+    // ---------------- Threads ----------------
+    let replyThread = null;   // {id, peer, peer_name, title}
+
+    function threadById(id) { return (appState.threads || []).find(t => t.id === id); }
+
+    function setReplyThread(t) {
+      replyThread = t;
+      const bar = document.getElementById('reply-bar');
+      bar.style.display = t ? 'flex' : 'none';
+      if (t) {
+        document.getElementById('reply-peer').textContent = t.peer_name || nameOf(t.peer);
+        updateSelectedPeer(t.peer);
+        const sel = document.getElementById('peer-select');
+        if ([...sel.options].some(o => o.value === t.peer)) sel.value = t.peer;
+        document.getElementById('chat-input').focus();
+        fetch('/api/v1/threads/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ thread_id: t.id }) });
+      }
+    }
+
+    function replyToThread(id) {
+      const t = threadById(id);
+      if (t) setReplyThread(t); else showToast('Thread not found', id);
+    }
+
+    async function applyPatch(path, who, threadId) {
+      showToast('Applying code changes…', 'Finding your checkout (or cloning)');
+      const r = await (await fetch('/api/v1/ui/apply-patch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, sender_name: who, thread_id: threadId, conversation_id: activeConvId })
+      })).json();
+      if (r.ok) {
+        showToast('Applied on branch ' + r.branch, (r.cloned ? 'Cloned to ' : '') + r.checkout + (r.warnings && r.warnings.length ? ' · ' + r.warnings.join(' ') : ''));
+      } else {
+        showToast('Could not apply', r.error || 'unknown error');
+      }
     }
 
     // ---------------- Share Session ----------------
@@ -1263,7 +1372,9 @@
       const payload = {
         conversation_id: convId,
         note: document.getElementById('session-note').value.trim(),
-        include_transcript: document.getElementById('session-transcript').checked
+        include_transcript: document.getElementById('session-transcript').checked,
+        include_code: document.getElementById('session-code').checked,
+        my_conversation_id: activeConvId
       };
       let ok = 0, lastErr = '';
       for (const peer of currentTargets()) {

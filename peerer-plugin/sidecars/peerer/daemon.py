@@ -70,6 +70,8 @@ def _read_version() -> str:
 VERSION = _read_version()
 
 import sessions  # noqa: E402  (same directory)
+import threads   # noqa: E402
+import gitshare  # noqa: E402
 
 def resolve_agentapi() -> Optional[str]:
     """Resolves the path to the Antigravity agentapi binary."""
@@ -272,6 +274,38 @@ def dispatch_peer_message(
             logger.error("Failed to unpack shared session from %s: %s", sender, e)
             metadata["unpack_error"] = str(e)
 
+    # ---- Thread routing: bind to an existing conversation when we know one
+    thread: Optional[Dict[str, Any]] = None
+    tid = metadata.get("thread_id")
+    their_conv = metadata.get("reply_to") or ""
+    if threads.valid_id(tid) or their_conv:
+        existing = threads.get(tid) if threads.valid_id(tid) else None
+        if not existing and their_conv:
+            existing = threads.find(sender, their_conv=their_conv)
+        thread = threads.upsert(existing["id"] if existing else tid, peer=sender,
+                                peer_name=metadata.get("sender_name") or "",
+                                their_conv=their_conv, title=metadata.get("session_title") or title,
+                                last_from="them", bump_unread=True)
+        metadata["thread_id"] = thread["id"]
+        if not conversation_id and thread.get("my_conv"):
+            conversation_id = thread["my_conv"]          # → send-message into the bound conversation
+
+    # Inline attachments (thread replies with files) → ~/Peerer Shared/<sender>/attachments/
+    if metadata.get("attachments"):
+        try:
+            import base64
+            dest = sessions.SHARED_ROOT / sessions._slug(metadata.get("sender_name") or sender) / "attachments" / time.strftime("%Y%m%d-%H%M%S")
+            dest.mkdir(parents=True, exist_ok=True)
+            saved = []
+            for a in metadata.pop("attachments")[:20]:
+                name = Path(a.get("name") or "file").name
+                (dest / name).write_bytes(base64.b64decode(a.get("b64") or ""))
+                saved.append({"path": name, "bytes": (dest / name).stat().st_size})
+            metadata["local_path"] = str(dest)
+            metadata["files"] = saved
+        except Exception as e:
+            metadata["unpack_error"] = str(e)
+
     msg_record = {
         "id": f"msg_{int(time.time() * 1000)}",
         "received_at": time.time(),
@@ -279,6 +313,7 @@ def dispatch_peer_message(
         "title": title,
         "content": content,
         "conversation_id": conversation_id,
+        "thread_id": thread["id"] if thread else None,
         "metadata": metadata
     }
     INBOX.append(msg_record)
@@ -290,6 +325,8 @@ def dispatch_peer_message(
 
     if shared_session:
         agent_prompt = sessions.agent_prompt_for_shared_session(sender_label, shared_session, metadata.get("note") or "")
+        if thread:
+            agent_prompt += threads.reply_instructions(thread)
     else:
         agent_prompt = (
             f"=== Incoming Message from Antigravity Peer [{sender_label}] ===\n"
@@ -299,13 +336,18 @@ def dispatch_peer_message(
             f"==========================================================\n"
             f"Action Required: Respond to or execute the above request sent by peer instance '{sender}'."
         )
+        if thread:
+            agent_prompt += threads.reply_instructions(thread)
 
     if os.getenv("MOCK_AGENTAPI") == "1":
         logger.info("[MOCK] Delivered to agentapi: sender=%s, conv_id=%s", sender, conversation_id)
+        msg_record["delivery"] = "accepted"
+        msg_record["delivery_mode"] = "send-message" if conversation_id else "new-conversation"
         return {
             "status": "accepted",
             "mock": True,
             "message_id": msg_record["id"],
+            "mode": msg_record["delivery_mode"],
             "target": conversation_id or "new_conversation",
             "instance_name": CONFIG.get("instance_name")
         }
@@ -347,6 +389,10 @@ def dispatch_peer_message(
                 out, mode = fb, "send-message"
         msg_record["delivery"] = out["status"]
         msg_record["delivery_mode"] = mode
+        if thread and out["status"] == "accepted":
+            my_conv = conversation_id if mode == "send-message" else _extract_conv_id(out.get("output"))
+            if my_conv:
+                threads.upsert(thread["id"], peer=sender, my_conv=my_conv)
         if out["status"] != "accepted":
             msg_record["delivery_error"] = out.get("error", "")
             logger.warning("agentapi (%s) refused message from %s: %s", mode, sender, out.get("error"))
@@ -384,6 +430,18 @@ def _agentapi_outcome(stdout: str) -> Dict[str, Any]:
         hint = PROJECT_HINT if "project_id" in str(err) else ""
         return {"status": "error", "error": str(err), "hint": hint}
     return {"status": "accepted", "output": data.get("response", {})}
+
+
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _extract_conv_id(obj: Any) -> str:
+    """agentapi's new-conversation response shape isn't documented; find the first uuid in it."""
+    try:
+        m = UUID_RE.search(json.dumps(obj))
+        return m.group(0) if m else ""
+    except Exception:
+        return ""
 
 
 def _run_agentapi(args: List[str]) -> Dict[str, Any]:
@@ -703,7 +761,17 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             q = self.path.split("?", 1)[1] if "?" in self.path else ""
             for part in q.split("&"):
                 if part.startswith("conv=") and CONV_ID_RE.match(part[5:]):
-                    LAST_ACTIVE_CONV = part[5:]
+                    if part[5:] != LAST_ACTIVE_CONV:
+                        LAST_ACTIVE_CONV = part[5:]
+                        # Learn which local checkout backs this conversation (for "Apply to my checkout")
+                        def _learn(cid=LAST_ACTIVE_CONV):
+                            try:
+                                ws = sessions.workspace_for(cid, AGENTAPI_PATH)
+                                if ws:
+                                    gitshare.remember_checkout(str(ws))
+                            except Exception:
+                                pass
+                        threading.Thread(target=_learn, daemon=True).start()
             broker_alive = BROKER_WORKER is not None and BROKER_WORKER.is_alive()
             peers_dict = dict(DISCOVERED_PEERS)
             try:
@@ -744,7 +812,8 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 },
                 "peers": list(peers_dict.values()),
                 "inbox": list(INBOX),
-                "outbox": list(OUTBOX)
+                "outbox": list(OUTBOX),
+                "threads": threads.all_threads()
             })
             return
 
@@ -861,8 +930,10 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"status": "error", "error": "peer and conversation_id are required"})
                 return
             me = CONFIG.get("display_name") or CONFIG.get("instance_name")
+            include_code = body.get("include_code", True) is not False
             try:
-                bundle = sessions.build_bundle(conv_id, me, include_transcript=include_transcript)
+                bundle = sessions.build_bundle(conv_id, me, include_transcript=include_transcript,
+                                               include_code=include_code, agentapi_path=AGENTAPI_PATH)
             except FileNotFoundError as e:
                 self._send_json(HTTPStatus.NOT_FOUND, {"status": "error", "error": str(e)}); return
             except ValueError as e:
@@ -872,24 +943,115 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             content = (f"{me} shared the session “{man['title']}” with you "
                        f"({len(man['files'])} file{'s' if len(man['files']) != 1 else ''}, {bundle['zip_bytes'] // 1024} KB)."
                        + (f"\n\nNote: {note}" if note else ""))
+            target_name = (DISCOVERED_PEERS.get(peer) or {}).get("display_name") or peer
+            my_conv = body.get("my_conversation_id") or conv_id      # the shared session IS my side of the thread
+            t = threads.find(peer, my_conv=my_conv) or threads.upsert(None, peer=peer, peer_name=target_name,
+                                                                        my_conv=my_conv, title=title, last_from="me")
             metadata = {"type": "session_share", "sender_name": me, "session_id": conv_id,
                         "session_title": man["title"], "note": note, "files": man["files"],
-                        "skipped": man["skipped"], "zip_bytes": bundle["zip_bytes"], "bundle_b64": bundle["bundle_b64"]}
-            target_name = (DISCOVERED_PEERS.get(peer) or {}).get("display_name") or peer
+                        "skipped": man["skipped"], "zip_bytes": bundle["zip_bytes"], "code": man.get("code"),
+                        "thread_id": t["id"], "reply_to": my_conv, "bundle_b64": bundle["bundle_b64"]}
             try:
                 import send as send_cli
                 res = send_cli.send_message(peer=peer, message=content, title=title,
+                                            conversation_id=t.get("their_conv") or None,
                                             sender=CONFIG.get("instance_name", "peerer-local"), metadata=metadata)
             except Exception as e:
                 res = {"status": "error", "error": str(e)}
             OUTBOX.append({
                 "id": f"msg_out_{int(time.time() * 1000)}", "sent_at": time.time(),
                 "target_peer": peer, "target_name": target_name, "title": title, "content": content,
+                "thread_id": t["id"],
                 "metadata": {k: v for k, v in metadata.items() if k != "bundle_b64"},
                 "status": res.get("status")
             })
             code = HTTPStatus.OK if res.get("status") == "success" else HTTPStatus.INTERNAL_SERVER_ERROR
             self._send_json(code, {**res, "zip_bytes": bundle["zip_bytes"], "files": man["files"], "skipped": man["skipped"]})
+            return
+
+        # Reply on a thread (used by the panel and by `peerer reply` from the agent)
+        if path == "/api/v1/threads/reply":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except Exception as e:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"status": "error", "error": f"Invalid JSON: {e}"}); return
+            tid = body.get("thread_id"); message = (body.get("message") or "").strip()
+            t = threads.get(tid) if threads.valid_id(tid) else None
+            if not t:
+                self._send_json(HTTPStatus.NOT_FOUND, {"status": "error", "error": f"Unknown thread {tid}"}); return
+            if not message and not body.get("attachments"):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"status": "error", "error": "message or attachments required"}); return
+            me = CONFIG.get("display_name") or CONFIG.get("instance_name")
+            metadata: Dict[str, Any] = {"sender_name": me, "thread_id": t["id"]}
+            if t.get("my_conv"):
+                metadata["reply_to"] = t["my_conv"]
+            atts = []
+            for ap in (body.get("attachments") or [])[:20]:
+                p = Path(ap).expanduser()
+                if p.is_file() and p.stat().st_size <= 400_000:
+                    import base64
+                    atts.append({"name": p.name, "bytes": p.stat().st_size, "b64": base64.b64encode(p.read_bytes()).decode("ascii")})
+            if atts:
+                metadata["type"] = "data_share"
+                metadata["attachments"] = atts
+                metadata["attachment_names"] = [a["name"] for a in atts]
+            title = body.get("title") or f"Re: {t.get('title') or 'thread'}"
+            try:
+                import send as send_cli
+                res = send_cli.send_message(peer=t["peer"], message=message or f"{me} sent {len(atts)} file(s).",
+                                            title=title, conversation_id=t.get("their_conv") or None,
+                                            sender=CONFIG.get("instance_name", "peerer-local"), metadata=metadata)
+            except Exception as e:
+                res = {"status": "error", "error": str(e)}
+            threads.upsert(t["id"], peer=t["peer"], last_from="me")
+            OUTBOX.append({"id": f"msg_out_{int(time.time() * 1000)}", "sent_at": time.time(), "target_peer": t["peer"],
+                           "target_name": t.get("peer_name") or t["peer"], "title": title, "content": message,
+                           "thread_id": t["id"], "metadata": {k: v for k, v in metadata.items() if k != "attachments"},
+                           "status": res.get("status")})
+            self._send_json(HTTPStatus.OK if res.get("status") == "success" else HTTPStatus.INTERNAL_SERVER_ERROR, res)
+            return
+
+        if path == "/api/v1/threads/read":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except Exception:
+                body = {}
+            if threads.valid_id(body.get("thread_id")):
+                threads.mark_read(body["thread_id"])
+            self._send_json(HTTPStatus.OK, {"ok": True}); return
+
+        # Apply code changes from a received session to a local checkout (or clone it)
+        if path == "/api/v1/ui/apply-patch":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            except Exception as e:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)}); return
+            target = body.get("path") or ""
+            if not target or not sessions.is_within_shared_root(target) or not Path(target).is_dir():
+                self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "Not a received session folder"}); return
+            try:
+                res = gitshare.apply(Path(target), thread_id=(body.get("thread_id") or "").replace("t_", ""),
+                                     allow_clone=body.get("allow_clone", True) is not False)
+            except Exception as e:
+                res = {"ok": False, "error": str(e)}
+            if res.get("ok"):
+                who = body.get("sender_name") or "a peer"
+                note = (f"Applied {who}'s code changes to {res['checkout']} on branch {res['branch']} "
+                        f"(commits: {res['applied']['commits']}, patch: {res['applied']['patch']}, new files: {res['applied']['untracked']}). "
+                        + ("Warnings: " + "; ".join(res["warnings"]) + ". " if res.get("warnings") else "")
+                        + "Please open that folder, review the diff (git diff main...HEAD or git status), and summarise what changed.")
+                conv = body.get("conversation_id") or LAST_ACTIVE_CONV
+                if AGENTAPI_PATH and conv and os.getenv("MOCK_AGENTAPI") != "1":
+                    threading.Thread(target=_send_into_conversation, args=(conv, f"[Peerer] Applied {who}'s changes", note), daemon=True).start()
+                try:
+                    if sys.platform == "darwin" and os.getenv("MOCK_AGENTAPI") != "1":
+                        subprocess.Popen(["open", "-a", "Antigravity", res["checkout"]])
+                except Exception:
+                    pass
+            self._send_json(HTTPStatus.OK, res)
             return
 
         # Reveal a received session (or a file in it) in Finder / file manager — restricted to ~/Peerer Shared
@@ -960,6 +1122,18 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 return
 
             target_name = (DISCOVERED_PEERS.get(peer) or {}).get("display_name") or peer
+            # Thread binding: reuse the thread for (peer, my conversation) or start one
+            my_conv = body.get("my_conversation_id") or LAST_ACTIVE_CONV
+            tid = body.get("thread_id")
+            if peer != "*":
+                t = threads.get(tid) if threads.valid_id(tid) else threads.find(peer, my_conv=my_conv)
+                t = threads.upsert(t["id"] if t else None, peer=peer, peer_name=target_name,
+                                   my_conv=my_conv, title=title if title != "Peer Task Request" else message[:80], last_from="me")
+                metadata["thread_id"] = t["id"]
+                if my_conv:
+                    metadata["reply_to"] = my_conv
+                if not conversation_id and t.get("their_conv"):
+                    conversation_id = t["their_conv"]
 
             try:
                 import send as send_cli
@@ -977,6 +1151,7 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
 
             OUTBOX.append({
                 "target_name": target_name,
+                "thread_id": metadata.get("thread_id"),
                 "id": f"msg_out_{int(time.time() * 1000)}",
                 "sent_at": time.time(),
                 "target_peer": peer,

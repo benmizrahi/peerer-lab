@@ -93,3 +93,5 @@ ehthumbs.db
 *~
 .venv/
 dist/
+peerer-plugin/sidecars/peerer/threads.json
+peerer-plugin/sidecars/peerer/known_repos.json

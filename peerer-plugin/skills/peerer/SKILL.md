@@ -56,3 +56,31 @@ When another Antigravity instance sends a message to this node:
 1. The **Peerer background sidecar daemon** receives the request and validates the auth token.
 2. The daemon dispatches the task into Antigravity via `agentapi send-message` (or `agentapi new-conversation`).
 3. Antigravity's **Reactive Wakeup** immediately presents the task to the agent with zero manual polling.
+
+## Collaboration Threads (working together)
+
+A **thread** binds your current conversation to a peer's conversation. Anything sent on a thread
+lands *inside* the other person's open conversation (and their replies land here) — so two users'
+agents can keep working on the same thing without copy-pasting.
+
+Incoming peer messages that belong to a thread end with a block like:
+
+```
+--- Collaboration thread t_1a2b3c4d with Bob Example ---
+  Reply:            peerer reply --thread t_1a2b3c4d "your message"
+  Reply with files: peerer reply --thread t_1a2b3c4d --attach path/to/file "message"
+```
+
+**When the user asks you to answer, ask, or hand something to that peer, use exactly that command.**
+Keep replies concise and self-contained; attach files rather than pasting large content.
+
+```bash
+peerer threads                                  # list threads (id, peer, unread, bound conversations)
+peerer reply --thread t_1a2b3c4d "Done — tests pass, see attached"  --attach tests/test_x.py
+```
+
+### Shared sessions with code
+A shared session folder (`~/Peerer Shared/<Sender>/<title>/`) may contain `repo.json`,
+`changes.patch`, `commits.patch` and `untracked/`. The user can apply them with **Apply to my
+checkout** in the Peerer panel (creates a `peerer/<thread>` branch). If asked to do it yourself:
+`git checkout -b peerer/review && git apply --3way changes.patch` in the matching checkout.
