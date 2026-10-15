@@ -338,12 +338,19 @@ def dispatch_peer_message(
 
         logger.info("Executing agentapi (%s) for peer %s", mode, sender)
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+        out = _agentapi_outcome(res.stdout)
+        msg_record["delivery"] = out["status"]
+        if out["status"] != "accepted":
+            msg_record["delivery_error"] = out.get("error", "")
+            logger.warning("agentapi (%s) refused message from %s: %s", mode, sender, out.get("error"))
         return {
-            "status": "accepted",
+            "status": "accepted",            # we accepted + stored it; agent hand-off result is separate
             "message_id": msg_record["id"],
             "mode": mode,
+            "agent": out["status"],
+            "agent_error": out.get("error"),
             "instance_name": CONFIG.get("instance_name"),
-            "output": res.stdout.strip()
+            "output": out.get("output")
         }
     except subprocess.CalledProcessError as e:
         err_msg = e.stderr.strip() or str(e)
@@ -352,6 +359,24 @@ def dispatch_peer_message(
     except subprocess.TimeoutExpired:
         logger.error("agentapi command timed out after 30s")
         return {"status": "error", "error": "Timeout while invoking agentapi"}
+
+
+PROJECT_HINT = ("Antigravity couldn't start a conversation because no project window is active. "
+                "Click into an Antigravity window that has a folder/project open, then try again — "
+                "or use 'Copy prompt' and paste it into any chat.")
+
+
+def _agentapi_outcome(stdout: str) -> Dict[str, Any]:
+    """agentapi exits 0 even on failure; the error is inside its JSON."""
+    try:
+        data = json.loads(stdout or "{}")
+    except Exception:
+        return {"status": "accepted", "output": (stdout or "").strip()}
+    err = data.get("error")
+    if err:
+        hint = PROJECT_HINT if "project_id" in str(err) else ""
+        return {"status": "error", "error": str(err), "hint": hint}
+    return {"status": "accepted", "output": data.get("response", {})}
 
 
 def open_in_agent(title: str, prompt: str) -> Dict[str, Any]:
@@ -363,7 +388,10 @@ def open_in_agent(title: str, prompt: str) -> Dict[str, Any]:
     try:
         res = subprocess.run([AGENTAPI_PATH, "new-conversation", f"--title={title}", prompt],
                              capture_output=True, text=True, timeout=30, check=True)
-        return {"status": "accepted", "output": res.stdout.strip()}
+        out = _agentapi_outcome(res.stdout)
+        if out["status"] != "accepted":
+            logger.warning("agentapi new-conversation refused: %s", out["error"])
+        return out
     except subprocess.CalledProcessError as e:
         return {"status": "error", "error": e.stderr.strip() or str(e)}
     except subprocess.TimeoutExpired:
@@ -858,8 +886,12 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             info = {"title": man.get("title") or Path(target).name, "local_path": target,
                     "files": man.get("files") or [{"path": p.name, "bytes": p.stat().st_size} for p in Path(target).iterdir() if p.is_file()]}
             who = body.get("sender_name") or man.get("shared_by") or "a peer"
-            res = open_in_agent(f"[Shared by {who}] {info['title']}", sessions.agent_prompt_for_shared_session(who, info, body.get("note") or ""))
-            self._send_json(HTTPStatus.OK if res.get("status") == "accepted" else HTTPStatus.INTERNAL_SERVER_ERROR, res)
+            prompt = sessions.agent_prompt_for_shared_session(who, info, body.get("note") or "")
+            if body.get("dry_run"):
+                self._send_json(HTTPStatus.OK, {"status": "dry_run", "prompt": prompt}); return
+            res = open_in_agent(f"[Shared by {who}] {info['title']}", prompt)
+            res["prompt"] = prompt
+            self._send_json(HTTPStatus.OK, res)
             return
 
         # UI Task Dispatch Endpoint (Called from embedded UI)

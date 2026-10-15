@@ -906,21 +906,21 @@
     let freshIds = new Set();
     const baseTitle = document.title;
 
-    function showToast(title, body) {
+    function showToast(title, body, onClick) {
       const stack = document.getElementById('toast-stack');
       const el = document.createElement('div');
       el.className = 'toast';
       el.innerHTML = `
         <div class="toast-title">${escapeHtml(title)}</div>
-        <div class="toast-body">${escapeHtml(body)}</div>
+        <div class="toast-body" style="${onClick ? 'white-space: normal;' : ''}">${escapeHtml(body)}</div>
       `;
       const dismiss = () => {
         el.classList.add('out');
         setTimeout(() => el.remove(), 200);
       };
-      el.onclick = () => { dismiss(); clearUnread(); };
+      el.onclick = () => { dismiss(); clearUnread(); if (onClick) onClick(); };
       stack.appendChild(el);
-      setTimeout(dismiss, 5000);
+      setTimeout(dismiss, onClick ? 12000 : 5000);
     }
 
     function updateUnreadBadge() {
@@ -1041,6 +1041,7 @@
           id: m.id,
           dir: 'in',
           sender: (m.metadata && m.metadata.sender_name) || nameOf(m.sender),
+          delivery: m.delivery,
           title: m.title,
           content: m.content,
           metadata: m.metadata || {},
@@ -1113,7 +1114,9 @@
                     <div class="session-actions">
                       <button class="btn-modal primary" onclick="openSharedWithAgent('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}')">Open with Antigravity</button>
                       <button class="btn-modal" onclick="openShared('${escapeHtml(meta.local_path)}')">Show files</button>
+                      <button class="btn-modal" title="Copy a prompt to paste into any chat" onclick="copyPrompt('${escapeHtml(meta.local_path)}', '${escapeHtml(msg.sender)}')">Copy prompt</button>
                     </div>
+                    ${msg.delivery === 'error' ? `<div class="field-status err" style="font-size:10.5px;">Couldn't open automatically — use the buttons above.</div>` : ''}
                   ` : ''}
                 </div>
               ` : meta.type === 'data_share' ? `
@@ -1281,13 +1284,34 @@
       await fetch('/api/v1/ui/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
     }
 
+    let lastPrompt = '';
+
     async function openSharedWithAgent(path, who) {
-      showToast('Opening in Antigravity…', 'A new conversation will start with this session');
       const r = await (await fetch('/api/v1/ui/open-agent', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, sender_name: who })
       })).json();
-      if (r.status !== 'accepted') showToast('Could not open', r.error || 'agentapi error');
+      lastPrompt = r.prompt || '';
+      if (r.status === 'accepted') {
+        showToast('Opened in Antigravity', 'A new conversation was started with this session');
+      } else {
+        showToast('Could not start a conversation',
+                  (r.hint || r.error || 'agentapi error') + ' — click here to copy a prompt you can paste into any chat.',
+                  () => copyPrompt());
+      }
+    }
+
+    async function copyPrompt(path, who) {
+      if (!lastPrompt && path) {
+        const r = await (await fetch('/api/v1/ui/open-agent', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, sender_name: who, dry_run: true })
+        })).json();
+        lastPrompt = r.prompt || '';
+      }
+      if (!lastPrompt) return;
+      try { await navigator.clipboard.writeText(lastPrompt); showToast('Prompt copied', 'Paste it into any Antigravity chat'); }
+      catch (e) { prompt('Copy this prompt:', lastPrompt); }
     }
 
     function openShareModal() {
