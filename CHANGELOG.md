@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+### Fixed
+- *Open with Antigravity* silently did nothing when Antigravity refused to start a conversation (e.g. no project window active). `agentapi` exits 0 with the error inside its JSON; the daemon now detects that, the panel shows the reason, and a new **Copy prompt** button offers a fallback you can paste into any chat.
+
 ## [1.1.0] - 2026-10-15
 
 ### Added
