@@ -69,6 +69,9 @@ peerer/
 
 ## Getting Started
 
+> **Not a developer?** See [INSTALL.md](./INSTALL.md) — you can ask Antigravity
+> to install it for you, or just double-click **`Install Peerer.command`**.
+
 ### 0. Install (one line)
 
 ```bash
