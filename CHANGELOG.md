@@ -8,6 +8,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 ### Added
 - **Real session sharing.** *Share Session* now sends a portable copy of a conversation — its artifacts, uploaded files, and a readable transcript digest (`SESSION.md`) — packed into a size-budgeted zip inside the peer message. The receiver gets it under `~/Peerer Shared/<Sender>/<title>/`, a card in the panel listing the files, **Open with Antigravity** (starts a conversation whose agent reads the session) and **Show files**. Only what the sender explicitly shares ever leaves a machine.
 - Session picker in the share dialog (recent sessions, current one preselected, artifact count/size, optional note, transcript on/off).
+- **Clear chat** button (🗑) in the panel header; received session files are kept.
 - Endpoints: `GET /api/v1/ui/sessions`, `POST /api/v1/ui/share-session`, `POST /api/v1/ui/open`, `POST /api/v1/ui/open-agent` (the last two are restricted to `~/Peerer Shared`).
 
 ### Fixed
