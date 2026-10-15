@@ -59,6 +59,16 @@ CONVERSATION_ID_REGEX = re.compile(r"^[a-zA-Z0-9_\-]+$")
 START_TIME = time.time()
 WEB_DIR = Path(__file__).parent / "web"
 
+
+def _read_version() -> str:
+    try:
+        return json.loads((Path(__file__).resolve().parent.parent.parent / "plugin.json").read_text())["version"]
+    except Exception:
+        return "0.0.0"
+
+
+VERSION = _read_version()
+
 def resolve_agentapi() -> Optional[str]:
     """Resolves the path to the Antigravity agentapi binary."""
     path = shutil.which("agentapi")
@@ -563,7 +573,8 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 "notifications": CONFIG.get("notifications", True) is not False,
                 "broker_connected": BROKER_WORKER is not None and BROKER_WORKER.is_alive(),
                 "profile": prof,
-                "config_path": str(CONFIG_FILE)
+                "config_path": str(CONFIG_FILE),
+                "version": VERSION
             })
             return
 
@@ -591,6 +602,7 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 "local_node": {
                     "instance_name": CONFIG.get("instance_name"),
                     "display_name": CONFIG.get("display_name") or CONFIG.get("instance_name"),
+                    "version": VERSION,
                     "uptime_seconds": round(time.time() - START_TIME, 1),
                     "agentapi_ready": AGENTAPI_PATH is not None or os.getenv("MOCK_AGENTAPI") == "1",
                     "agentapi_path": AGENTAPI_PATH,
@@ -612,6 +624,7 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, {
                 "status": "ok",
                 "instance_name": CONFIG.get("instance_name"),
+                "version": VERSION,
                 "uptime_seconds": round(time.time() - START_TIME, 2),
                 "agentapi_ready": AGENTAPI_PATH is not None or os.getenv("MOCK_AGENTAPI") == "1",
                 "agentapi_path": AGENTAPI_PATH,
@@ -838,7 +851,7 @@ def main():
     host = CONFIG.get("host", "127.0.0.1")
     port = int(CONFIG.get("port", 8950))
     server_address = (host, port)
-    logger.info("Starting Antigravity Peer Bridge Daemon on %s:%d", host, port)
+    logger.info("Starting Peerer daemon v%s on %s:%d", VERSION, host, port)
     logger.info("Identity: %s (peer_id: %s)", CONFIG.get("display_name"), CONFIG.get("instance_name"))
     logger.info("agentapi path: %s", AGENTAPI_PATH or "NOT FOUND (set MOCK_AGENTAPI=1 for tests)")
 

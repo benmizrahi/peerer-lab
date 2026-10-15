@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  plugin:
+    name: Plugin tests (py${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run plugin tests
+        env:
+          MOCK_AGENTAPI: "1"
+        run: python -m unittest discover -s peerer-plugin/tests -v
+      - name: Shell syntax
+        run: |
+          bash -n peerer-plugin/install.sh
+          bash -n "peerer-plugin/Install Peerer.command"
+          bash -n "peerer-plugin/Uninstall Peerer.command"
+
+  server:
+    name: Broker tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: peerer-server/requirements.txt
+      - name: Install
+        run: pip install -r peerer-server/requirements.txt pytest httpx
+      - name: Run broker tests
+        working-directory: peerer-server
+        run: pytest -q
+
+  version-consistency:
+    name: Version matches tag (on release tags)
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          V=$(python3 -c "import json;print(json.load(open('peerer-plugin/plugin.json'))['version'])")
+          [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "plugin.json version $V != tag ${GITHUB_REF_NAME}"; exit 1; }

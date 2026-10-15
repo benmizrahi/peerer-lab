@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify version matches tag
+        run: |
+          V=$(python3 -c "import json;print(json.load(open('peerer-plugin/plugin.json'))['version'])")
+          [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "plugin.json version $V != tag ${GITHUB_REF_NAME}"; exit 1; }
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: Run tests
+        env:
+          MOCK_AGENTAPI: "1"
+        run: python3 -m unittest discover -s peerer-plugin/tests
+
+      - name: Build plugin archive
+        run: |
+          mkdir -p dist
+          # Ship only what users need; no secrets, caches, or tests
+          rsync -a --exclude '__pycache__' --exclude '*.pyc' --exclude 'config.json' \
+                   --exclude 'peers.json' --exclude 'runtime.json' --exclude 'tests' --exclude '.gitignore' \
+                   peerer-plugin/ "dist/peerer-plugin-${VERSION}/"
+          cp LICENSE "dist/peerer-plugin-${VERSION}/"
+          (cd dist && zip -qr "peerer-plugin-${VERSION}.zip" "peerer-plugin-${VERSION}")
+          (cd dist && shasum -a 256 "peerer-plugin-${VERSION}.zip" > "peerer-plugin-${VERSION}.zip.sha256")
+          ls -la dist
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\["ver"\\]" {p=1; next}
+            p && /^## \[/ {exit}
+            p {print}
+          ' CHANGELOG.md | sed '/^\[.*\]: http/d' > dist/notes.md
+          [ -s dist/notes.md ] || echo "Release v${VERSION}." > dist/notes.md
+          {
+            echo
+            echo "---"
+            echo "**Install:** \`curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/v${VERSION}/peerer-plugin/install.sh | bash\`"
+            echo "or download \`peerer-plugin-${VERSION}.zip\`, unzip, and double-click **Install Peerer.command**."
+          } >> dist/notes.md
+          cat dist/notes.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Peerer v${{ env.VERSION }}
+          body_path: dist/notes.md
+          files: |
+            dist/peerer-plugin-${{ env.VERSION }}.zip
+            dist/peerer-plugin-${{ env.VERSION }}.zip.sha256

@@ -66,6 +66,11 @@ class TestPeererBridge(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(body["status"], "ok")
         self.assertTrue(body["agentapi_ready"])
+        self.assertRegex(body["version"], r"^\d+\.\d+\.\d+$")
+
+    def test_version_matches_plugin_json(self):
+        manifest = json.loads((repo_root / "plugin.json").read_text())
+        self.assertEqual(daemon.VERSION, manifest["version"])
 
     def test_ping(self):
         code, body = self._request("POST", "/api/v1/ping")

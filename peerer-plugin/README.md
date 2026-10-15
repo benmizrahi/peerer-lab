@@ -1,68 +1,38 @@
-# Peerer: Antigravity Peer Bridge
+# Peerer Plugin
 
-A native peer-to-peer communication bridge connecting **Google Antigravity instances** using **Sidecars** and **`agentapi`**.
+The Antigravity plugin: an always-on sidecar daemon with an embedded **Mesh & Activity** panel, a skill so the agent can message peers, and the `peerer` CLI.
 
-This extension operates directly on Antigravity's native primitives—no third-party frameworks or A2A protocols required.
-
----
-
-## Architecture Overview
-
-```
-+-------------------------------------------------------------+
-|               Antigravity Instance A                        |
-|                                                             |
-|  [Agent Turn]                                               |
-|         │                                                   |
-|         ▼                                                   |
-|  [Peerer Skill]                                             |
-|         │                                                   |
-|         ▼                                                   |
-|  peerer send --peer http://instance-b:8950                  |
-+─────────┬───────────────────────────────────────────────────+
-          │
-          │ HTTP POST /api/v1/messages (Bearer Auth)
-          ▼
-+─────────────────────────────────────────────────────────────+
-|               Antigravity Instance B                        |
-|                                                             |
-|  [Sidecar: daemon.py (Port 8950)]                           |
-|         │                                                   |
-|         │ 1. Validate Token & Payload                       |
-|         │ 2. Record in Local Inbox                          |
-|         ▼                                                   |
-|  agentapi send-message (or new-conversation)                |
-|         │                                                   |
-|         ▼                                                   |
-|  [Reactive Wakeup: Agent B executes delegated task]         |
-+-------------------------------------------------------------+
-```
+> Project overview, architecture, and broker docs live in the [repository README](../README.md).
+> Non-technical install guide: [INSTALL.md](./INSTALL.md) · Changes: [CHANGELOG](../CHANGELOG.md)
 
 ---
 
 ## Directory Structure
 
 ```text
-peerer/
+peerer-plugin/
+├── plugin.json                 # Manifest — single source of truth for the version
+├── install.sh                  # One-line installer / upgrader
+├── Install Peerer.command      # Double-click installer (macOS)
+├── Uninstall Peerer.command
+├── INSTALL.md                  # Plain-language guide
 ├── bin/
-│   └── peerer                  # Unified executable CLI (ping, list, send, daemon, inbox)
-├── plugin.json                 # Antigravity plugin manifest
-├── README.md                   # Documentation and usage guide
-├── sidecars/
-│   └── peerer/
-│       ├── sidecar.json        # Sidecar daemon registration
-│       ├── config.json         # Bridge configuration (port, token, limits)
-│       └── daemon.py           # Inbound HTTP daemon bridging to agentapi
-├── skills/
-│   └── peerer/
-│       ├── SKILL.md            # Agent instructions for delegating peer tasks
-│       └── scripts/
-│           ├── peers.json      # Known peers registry
-│           ├── peers.py        # Peer management tool
-│           └── send.py         # Outbound messaging tool
+│   └── peerer                  # CLI: send · list · ping · add · remove · inbox · health · daemon · --version
+├── sidecars/peerer/
+│   ├── sidecar.json            # Sidecar registration + web UI view (aux pane)
+│   ├── daemon.py               # HTTP API, broker sync, notifications, settings, UI routes
+│   ├── web/index.html          # The panel (single file, no build step)
+│   ├── config.example.json     # Template; real config.json is git-ignored
+│   └── runtime.json            # (generated) host/port/pid of the running daemon
+├── skills/peerer/
+│   ├── SKILL.md                # Instructions the agent reads
+│   └── scripts/
+│       ├── send.py             # Outbound messaging (direct or via broker)
+│       ├── peers.py            # Peer registry + ping
+│       └── peers.example.json
 └── tests/
-    ├── test_bridge.py          # Unit tests for daemon and auth
-    └── test_cli.py             # Integration tests for peerer CLI
+    ├── test_bridge.py          # Daemon API, auth, UI endpoints, settings
+    └── test_cli.py             # CLI integration
 ```
 
 ---

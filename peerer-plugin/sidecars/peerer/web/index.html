@@ -701,7 +701,7 @@
     </div>
 
     <div class="settings-footer">
-      <span class="field-status" id="save-status"></span>
+      <span class="field-status" id="save-status"><span id="ver-tag" style="color:var(--text-muted)"></span></span>
       <div style="display:flex; gap:6px;">
         <button class="btn-modal" type="button" onclick="toggleSettings(false)">Cancel</button>
         <button class="btn-modal primary" type="button" id="save-btn" onclick="saveSettings()">Save</button>
@@ -1109,6 +1109,7 @@
         tok.value = '';
         tok.placeholder = s.broker_token_set ? `Saved (${s.broker_token_hint}) — leave blank to keep` : 'Paste the token you were given';
         document.getElementById('set-notify').checked = !!s.notifications;
+        const vt = document.getElementById('ver-tag'); if (vt && s.version) vt.textContent = 'Peerer v' + s.version;
 
         setStatus('test-status', s.broker_url ? (s.broker_connected ? 'Connected' : 'Not connected') : '', s.broker_connected ? 'ok' : '');
         setStatus('save-status', '');

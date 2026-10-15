@@ -74,6 +74,7 @@ def cmd_health(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="peerer", description="Antigravity Peer Communication Tool (Peerer)")
+    parser.add_argument("--version", action="version", version=f"peerer {daemon.VERSION}")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     # 1. ping

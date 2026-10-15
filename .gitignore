@@ -91,3 +91,5 @@ ehthumbs.db
 *.swp
 *.swo
 *~
+.venv/
+dist/
