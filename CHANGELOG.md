@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+### Fixed
+- Panel showed your own machine (`local-node`, a loopback entry in `peers.json`) as a peer; loopback entries are now excluded.
+- Peers, message senders/targets, toasts, and the agent prompt header now show display names (e.g. "Ben Mizrahi") instead of peer IDs. Outgoing messages carry `metadata.sender_name`.
+
 ## [1.0.0] - 2026-10-15
 
 First public release.

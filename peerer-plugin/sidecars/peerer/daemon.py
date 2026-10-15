@@ -255,14 +255,18 @@ def dispatch_peer_message(
         "metadata": metadata
     }
     INBOX.append(msg_record)
-    send_os_notification(f"{sender}: {title}", content)
+    send_os_notification(f"{metadata.get('sender_name') or sender}: {title}", content)
 
     metadata_snippet = ""
     if metadata:
         metadata_snippet = f"\nMetadata Context:\n{json.dumps(metadata, indent=2)}\n"
 
+    sender_label = metadata.get("sender_name") or sender
+    if metadata.get("sender_name") and metadata["sender_name"] != sender:
+        sender_label = f"{metadata['sender_name']} ({sender})"
+
     agent_prompt = (
-        f"=== Incoming Message from Antigravity Peer [{sender}] ===\n"
+        f"=== Incoming Message from Antigravity Peer [{sender_label}] ===\n"
         f"Title: {title}\n"
         f"{metadata_snippet}"
         f"Message Body:\n{content}\n"
@@ -584,12 +588,17 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             peers_dict = dict(DISCOVERED_PEERS)
             try:
                 import peers as peer_cli
+                from urllib.parse import urlparse
                 reg = peer_cli.load_registry()
                 for name, info in reg.get("peers", {}).items():
+                    host = (urlparse(info.get("url") or "").hostname or "").lower()
+                    # A loopback entry is this very machine — never list yourself as a peer
+                    if host in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+                        continue
                     if name not in peers_dict and name != CONFIG.get("instance_name"):
                         peers_dict[name] = {
                             "peer_id": name,
-                            "display_name": f"{name} (Local)",
+                            "display_name": info.get("description") or name,
                             "capabilities": ["agentapi", "direct-p2p"],
                             "direct_url": info.get("url"),
                             "status": "online",
@@ -724,11 +733,15 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             title = body.get("title") or "Peer Task Request"
             conversation_id = body.get("conversation_id")
             model = body.get("model")
-            metadata = body.get("metadata", {})
+            metadata = dict(body.get("metadata") or {})
+            # Carry the human name so the receiving panel can show it instead of the peer_id
+            metadata.setdefault("sender_name", CONFIG.get("display_name") or CONFIG.get("instance_name"))
 
             if not peer or not message:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"status": "error", "error": "peer and message fields are required"})
                 return
+
+            target_name = (DISCOVERED_PEERS.get(peer) or {}).get("display_name") or peer
 
             try:
                 import send as send_cli
@@ -745,6 +758,7 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
                 res = {"status": "error", "error": str(e)}
 
             OUTBOX.append({
+                "target_name": target_name,
                 "id": f"msg_out_{int(time.time() * 1000)}",
                 "sent_at": time.time(),
                 "target_peer": peer,

@@ -16,6 +16,7 @@ from pathlib import Path
 
 repo_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(repo_root / "sidecars" / "peerer"))
+sys.path.insert(0, str(repo_root / "skills" / "peerer" / "scripts"))
 
 import daemon
 
@@ -151,6 +152,25 @@ class TestPeererBridge(unittest.TestCase):
         code, body = self._request("POST", "/api/v1/ui/ping", data={"target": "non-existent-peer"})
         self.assertEqual(code, 200)
         self.assertFalse(body.get("reachable"))
+
+    def test_ui_state_excludes_self_and_loopback(self):
+        """peers.json entries pointing at 127.0.0.1 are this machine — never listed as peers."""
+        import peers as peer_cli
+        orig = peer_cli.load_registry
+        peer_cli.load_registry = lambda: {"peers": {
+            "local-node": {"url": "http://127.0.0.1:8950", "description": "Local Antigravity Instance"},
+            "alice": {"url": "http://10.0.0.5:8950", "description": "Alice's Laptop"},
+        }}
+        try:
+            code, body = self._request("GET", "/api/v1/ui/state")
+            ids = [p["peer_id"] for p in body["peers"]]
+            self.assertNotIn("local-node", ids)
+            self.assertIn("alice", ids)
+            alice = next(p for p in body["peers"] if p["peer_id"] == "alice")
+            self.assertEqual(alice["display_name"], "Alice's Laptop")
+            self.assertNotIn(daemon.CONFIG["instance_name"], ids)
+        finally:
+            peer_cli.load_registry = orig
 
     # ---------------- Settings ----------------
 

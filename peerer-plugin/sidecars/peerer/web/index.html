@@ -756,7 +756,7 @@
     function updateSelectedPeer(val) {
       selectedTarget = val;
       const input = document.getElementById('chat-input');
-      input.placeholder = val === 'all' ? 'Message peers...' : `Message ${val}...`;
+      input.placeholder = val === 'all' ? 'Message peers...' : `Message ${nameOf(val)}...`;
       input.focus();
     }
 
@@ -837,7 +837,8 @@
       // Show up to 3 toasts; collapse the rest
       const shown = fresh.slice(-3);
       for (const m of shown) {
-        showToast(`${m.sender}${m.title && m.title !== 'Peer Message' ? ' · ' + m.title : ''}`, m.content || '');
+        const who = (m.metadata && m.metadata.sender_name) || nameOf(m.sender);
+        showToast(`${who}${m.title && m.title !== 'Peer Message' ? ' · ' + m.title : ''}`, m.content || '');
       }
       if (fresh.length > 3) {
         showToast('Peerer', `+${fresh.length - 3} more new messages`);
@@ -859,6 +860,15 @@
       } catch (err) {
         console.warn('Sync error:', err);
       }
+    }
+
+    // Resolve a peer_id to its human display name (falls back to the id)
+    function nameOf(peerId, fallback) {
+      if (!peerId) return fallback || '';
+      const local = appState.local_node || {};
+      if (peerId === local.instance_name) return local.display_name || 'You';
+      const p = (appState.peers || []).find(q => q.peer_id === peerId);
+      return (p && p.display_name) || fallback || peerId;
     }
 
     function render() {
@@ -901,7 +911,7 @@
         list.push({
           id: m.id,
           dir: 'in',
-          sender: m.sender,
+          sender: (m.metadata && m.metadata.sender_name) || nameOf(m.sender),
           title: m.title,
           content: m.content,
           metadata: m.metadata || {},
@@ -913,7 +923,7 @@
           id: m.id,
           dir: 'out',
           sender: 'You',
-          target: m.target_peer,
+          target: m.target_name || nameOf(m.target_peer),
           title: m.title,
           content: m.content,
           metadata: m.metadata || {},
