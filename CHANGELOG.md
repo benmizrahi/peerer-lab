@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+### Fixed
+- **Clear chat did nothing**: the Antigravity webview swallows `confirm()` dialogs. Clearing is now a two-click inline confirmation; all `alert/confirm/prompt` dialogs were removed from the panel in favour of toasts.
+- **Open with Antigravity now always lands somewhere**: when Antigravity refuses to start a new conversation (`project_id is required…`, no project window active), the session prompt is delivered into the conversation the panel is open in instead. Same fallback for inbound messages. `agentapi` is now run without `check=True` so a non-zero exit can't bypass the fallback.
+
 ## [1.1.1] - 2026-10-15
 
 ### Fixed

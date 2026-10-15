@@ -27,7 +27,7 @@ import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Deque, Dict, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 # Add skills/peerer/scripts to sys.path to enable CLI tools import
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "skills" / "peerer" / "scripts"
@@ -208,6 +208,8 @@ INBOX: Deque[Dict[str, Any]] = deque(maxlen=int(CONFIG.get("inbox_limit", 50)))
 OUTBOX: Deque[Dict[str, Any]] = deque(maxlen=50)
 DISCOVERED_PEERS: Dict[str, Any] = {}
 BROKER_WORKER: Optional['BrokerSyncWorker'] = None
+LAST_ACTIVE_CONV: str = ""   # conversation the panel is open in (reported by the UI poller)
+CONV_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{8,80}$")
 
 
 def send_os_notification(title: str, body: str) -> None:
@@ -337,9 +339,14 @@ def dispatch_peer_message(
             mode = "new-conversation"
 
         logger.info("Executing agentapi (%s) for peer %s", mode, sender)
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
-        out = _agentapi_outcome(res.stdout)
+        out = _run_agentapi(cmd[1:])
+        if out["status"] != "accepted" and mode == "new-conversation" and LAST_ACTIVE_CONV:
+            logger.info("new-conversation refused; delivering into active conversation %s", LAST_ACTIVE_CONV)
+            fb = _send_into_conversation(LAST_ACTIVE_CONV, f"[Peer: {sender}] {title}", agent_prompt)
+            if fb["status"] == "accepted":
+                out, mode = fb, "send-message"
         msg_record["delivery"] = out["status"]
+        msg_record["delivery_mode"] = mode
         if out["status"] != "accepted":
             msg_record["delivery_error"] = out.get("error", "")
             logger.warning("agentapi (%s) refused message from %s: %s", mode, sender, out.get("error"))
@@ -379,18 +386,49 @@ def _agentapi_outcome(stdout: str) -> Dict[str, Any]:
     return {"status": "accepted", "output": data.get("response", {})}
 
 
-def open_in_agent(title: str, prompt: str) -> Dict[str, Any]:
-    """Start a new Antigravity conversation with the given prompt (no inbox record)."""
+def _run_agentapi(args: List[str]) -> Dict[str, Any]:
+    """Run agentapi; it may exit non-zero AND/OR put the error in JSON. Normalise both."""
+    try:
+        res = subprocess.run([AGENTAPI_PATH] + args, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": "Timeout while invoking agentapi"}
+    out = _agentapi_outcome(res.stdout)
+    if out["status"] == "accepted" and res.returncode != 0 and not out.get("output"):
+        out = {"status": "error", "error": (res.stderr or "").strip().splitlines()[-1:] or f"agentapi exit {res.returncode}"}
+        out["error"] = out["error"][0] if isinstance(out["error"], list) and out["error"] else str(out["error"])
+    return out
+
+
+def _send_into_conversation(conv_id: str, title: str, prompt: str) -> Dict[str, Any]:
+    out = _run_agentapi(["send-message", f"--title={title}", conv_id, prompt])
+    out["mode"] = "send-message"
+    out["conversation_id"] = conv_id
+    return out
+
+
+def open_in_agent(title: str, prompt: str, fallback_conv: str = "") -> Dict[str, Any]:
+    """
+    Hand a prompt to Antigravity. Prefer a new conversation; if Antigravity refuses
+    (no project window active), deliver into `fallback_conv` (the conversation the
+    panel is open in) so the user still gets it where they're looking.
+    """
     if os.getenv("MOCK_AGENTAPI") == "1":
-        return {"status": "accepted", "mock": True}
+        return {"status": "accepted", "mock": True, "mode": "new-conversation"}
     if not AGENTAPI_PATH:
         return {"status": "error", "error": "agentapi executable not found. Ensure Antigravity is running."}
     try:
-        res = subprocess.run([AGENTAPI_PATH, "new-conversation", f"--title={title}", prompt],
-                             capture_output=True, text=True, timeout=30, check=True)
-        out = _agentapi_outcome(res.stdout)
+        out = _run_agentapi(["new-conversation", f"--title={title}", prompt])
+        out["mode"] = "new-conversation"
         if out["status"] != "accepted":
             logger.warning("agentapi new-conversation refused: %s", out["error"])
+            conv = fallback_conv if CONV_ID_RE.match(fallback_conv or "") else LAST_ACTIVE_CONV
+            if conv:
+                logger.info("Falling back to send-message into active conversation %s", conv)
+                fb = _send_into_conversation(conv, title, prompt)
+                if fb["status"] == "accepted":
+                    fb["note"] = "Delivered into your current conversation (Antigravity refused to open a new one)."
+                    return fb
+                out["fallback_error"] = fb.get("error")
         return out
     except subprocess.CalledProcessError as e:
         return {"status": "error", "error": e.stderr.strip() or str(e)}
@@ -661,6 +699,11 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
 
         # UI State API (Local UI poller)
         if path == "/api/v1/ui/state":
+            global LAST_ACTIVE_CONV
+            q = self.path.split("?", 1)[1] if "?" in self.path else ""
+            for part in q.split("&"):
+                if part.startswith("conv=") and CONV_ID_RE.match(part[5:]):
+                    LAST_ACTIVE_CONV = part[5:]
             broker_alive = BROKER_WORKER is not None and BROKER_WORKER.is_alive()
             peers_dict = dict(DISCOVERED_PEERS)
             try:
@@ -889,7 +932,7 @@ class PeerBridgeHandler(BaseHTTPRequestHandler):
             prompt = sessions.agent_prompt_for_shared_session(who, info, body.get("note") or "")
             if body.get("dry_run"):
                 self._send_json(HTTPStatus.OK, {"status": "dry_run", "prompt": prompt}); return
-            res = open_in_agent(f"[Shared by {who}] {info['title']}", prompt)
+            res = open_in_agent(f"[Shared by {who}] {info['title']}", prompt, body.get("conversation_id") or "")
             res["prompt"] = prompt
             self._send_json(HTTPStatus.OK, res)
             return

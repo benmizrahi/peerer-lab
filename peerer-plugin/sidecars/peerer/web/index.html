@@ -894,9 +894,7 @@
     }
 
     function copyToClipboard(text) {
-      navigator.clipboard.writeText(text).then(() => {
-        alert('Copied to clipboard!');
-      });
+      navigator.clipboard.writeText(text).then(() => showToast('Copied', '')).catch(() => showToast('Clipboard blocked', ''));
     }
 
     // --- Notification state ---
@@ -970,7 +968,7 @@
 
     async function refreshState() {
       try {
-        const res = await fetch('/api/v1/ui/state');
+        const res = await fetch('/api/v1/ui/state' + (activeConvId ? '?conv=' + encodeURIComponent(activeConvId) : ''));
         if (!res.ok) return;
         appState = await res.json();
         detectNewMessages(appState.inbox || []);
@@ -1149,7 +1147,7 @@
         : [selectedTarget];
 
       if (targets.length === 0) {
-        alert('No active peer instances found to send to.');
+        showToast('No peer online', 'Nobody to send to yet.');
         return;
       }
 
@@ -1182,12 +1180,20 @@
       });
     }
 
+    let clearArmedUntil = 0;
+
     async function clearChat() {
       const n = (appState.inbox || []).length + (appState.outbox || []).length;
-      if (!n) return;
-      if (!confirm(`Clear ${n} message${n === 1 ? '' : 's'} from this panel?\n\nFiles you received stay in ~/Peerer Shared.`)) return;
+      if (!n) { showToast('Nothing to clear', ''); return; }
+      if (Date.now() > clearArmedUntil) {
+        clearArmedUntil = Date.now() + 5000;
+        showToast(`Clear ${n} message${n === 1 ? '' : 's'}?`, 'Click the trash icon again within 5s to confirm. Received files stay in ~/Peerer Shared.');
+        return;
+      }
+      clearArmedUntil = 0;
       await fetch('/api/v1/ui/clear', { method: 'POST' });
       seenInboxIds.clear(); freshIds = new Set(); unreadCount = 0; updateUnreadBadge();
+      showToast('Chat cleared', '');
       refreshState();
     }
 
@@ -1202,7 +1208,7 @@
     }
 
     async function shareSession() {
-      if (!hasTargets()) { alert('No active peer to share with yet.'); return; }
+      if (!hasTargets()) { showToast('No peer online', 'Nobody to share with yet.'); return; }
       document.getElementById('session-modal').style.display = 'flex';
       setStatus('session-status', 'Loading sessions…');
       try {
@@ -1289,11 +1295,13 @@
     async function openSharedWithAgent(path, who) {
       const r = await (await fetch('/api/v1/ui/open-agent', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, sender_name: who })
+        body: JSON.stringify({ path, sender_name: who, conversation_id: activeConvId })
       })).json();
       lastPrompt = r.prompt || '';
       if (r.status === 'accepted') {
-        showToast('Opened in Antigravity', 'A new conversation was started with this session');
+        showToast('Opened in Antigravity', r.mode === 'send-message'
+          ? 'Delivered into your current conversation — switch to the chat to see it'
+          : 'A new conversation was started with this session');
       } else {
         showToast('Could not start a conversation',
                   (r.hint || r.error || 'agentapi error') + ' — click here to copy a prompt you can paste into any chat.',
@@ -1311,7 +1319,7 @@
       }
       if (!lastPrompt) return;
       try { await navigator.clipboard.writeText(lastPrompt); showToast('Prompt copied', 'Paste it into any Antigravity chat'); }
-      catch (e) { prompt('Copy this prompt:', lastPrompt); }
+      catch (e) { showToast('Clipboard blocked', 'Open the session folder and read SESSION.md instead.'); }
     }
 
     function openShareModal() {
