@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-15
+
 ### Fixed
 - *Open with Antigravity* silently did nothing when Antigravity refused to start a conversation (e.g. no project window active). `agentapi` exits 0 with the error inside its JSON; the daemon now detects that, the panel shows the reason, and a new **Copy prompt** button offers a fallback you can paste into any chat.
 
@@ -47,6 +49,7 @@ First public release.
 - Broker and peer tokens are stored only in the git-ignored `config.json`; the settings API never returns a token in full.
 - Settings endpoint accepts only user-facing keys (`display_name`, `instance_name`, `broker_url`, `broker_token`, `notifications`).
 
-[Unreleased]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.1...HEAD
 [1.0.0]: https://github.com/benmizrahi/peerer-lab/releases/tag/v1.0.0
 [1.1.0]: https://github.com/benmizrahi/peerer-lab/compare/v1.0.0...v1.1.0
+[1.1.1]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.0...v1.1.1
