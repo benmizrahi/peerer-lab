@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Peerer Mesh</title>
+  <style>
+    :root {
+      --bg: #131314;
+      --surface: #1e1f20;
+      --hover: #282a2c;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-card: rgba(255, 255, 255, 0.12);
+      --text: #e3e3e3;
+      --text-muted: #8e918f;
+      --text-bright: #ffffff;
+      --blue: #8ab4f8;
+      --blue-hover: #a8c7fa;
+      --blue-container: #1e3a5f;
+      --green: #34a853;
+      --font: "Google Sans", "Google Sans Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 12.5px;
+      line-height: 1.45;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Single Minimal Top Bar */
+    .top-bar {
+      height: 38px;
+      padding: 0 10px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      gap: 8px;
+    }
+
+    /* Active Peer Selector Pill */
+    .peer-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border-card);
+      border-radius: 14px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: var(--text);
+      max-width: 190px;
+      cursor: pointer;
+    }
+
+    .peer-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+    }
+
+    .peer-dot.offline {
+      background: var(--text-muted);
+    }
+
+    .peer-select {
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11.5px;
+      font-weight: 500;
+      outline: none;
+      cursor: pointer;
+      width: 100%;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .peer-select option {
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    /* Top Action Icons */
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+
+    .btn-icon:hover {
+      background: var(--hover);
+      color: var(--text-bright);
+    }
+
+    .btn-icon svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+    }
+
+    /* Chat Stream */
+    .chat-stream {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 12px;
+      padding: 20px;
+    }
+
+    /* Message Item */
+    .msg-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-width: 92%;
+    }
+
+    .msg-wrap.self {
+      align-self: flex-end;
+    }
+
+    .msg-wrap.peer {
+      align-self: flex-start;
+    }
+
+    .msg-meta {
+      font-size: 10.5px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0 4px;
+    }
+
+    .msg-wrap.self .msg-meta {
+      justify-content: flex-end;
+    }
+
+    .msg-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 11px;
+      color: var(--text);
+      font-size: 12.5px;
+      word-break: break-word;
+    }
+
+    .msg-wrap.self .msg-card {
+      background: var(--surface);
+      border-color: var(--border-card);
+      border-top-right-radius: 3px;
+    }
+
+    .msg-wrap.peer .msg-card {
+      background: #18191b;
+      border-top-left-radius: 3px;
+    }
+
+    .msg-title {
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--blue);
+      margin-bottom: 3px;
+    }
+
+    /* Shared Card */
+    .share-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-left: 2px solid var(--blue);
+      border-radius: 4px;
+      padding: 6px 8px;
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .share-box-header {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-bright);
+    }
+
+    .share-box-body {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(0, 0, 0, 0.3);
+      padding: 4px 6px;
+      border-radius: 3px;
+      max-height: 70px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    .btn-action-pill {
+      align-self: flex-start;
+      background: var(--hover);
+      border: 1px solid var(--border-card);
+      border-radius: 4px;
+      color: var(--blue);
+      font-family: inherit;
+      font-size: 10.5px;
+      font-weight: 500;
+      padding: 2px 7px;
+      cursor: pointer;
+    }
+
+    .btn-action-pill:hover {
+      background: var(--blue-container);
+    }
+
+    /* Bottom Input Bar */
+    .input-wrap {
+      padding: 8px 10px 10px;
+      flex-shrink: 0;
+    }
+
+    .input-box {
+      background: var(--surface);
+      border: 1px solid var(--border-card);
+      border-radius: 20px;
+      padding: 3px 5px 3px 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: border-color 0.15s ease;
+    }
+
+    .input-box:focus-within {
+      border-color: var(--blue);
+    }
+
+    .input-field {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12.5px;
+      height: 28px;
+      line-height: 28px;
+    }
+
+    .input-field::placeholder {
+      color: var(--text-muted);
+    }
+
+    .btn-send {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: #041e49;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+    }
+
+    .btn-send:hover:not(:disabled) {
+      background: var(--blue-hover);
+      transform: scale(1.05);
+    }
+
+    .btn-send:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-send svg {
+      width: 12px;
+      height: 12px;
+      stroke: currentColor;
+      stroke-width: 2.5;
+    }
+
+    /* Data Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+
+    .modal-card {
+      background: var(--surface);
+      border: 1px solid var(--border-card);
+      border-radius: 8px;
+      width: 88%;
+      max-width: 300px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .modal-card input, .modal-card textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11.5px;
+      padding: 6px;
+      border-radius: 4px;
+      outline: none;
+    }
+
+    .modal-card textarea {
+      font-family: var(--mono);
+      height: 80px;
+      resize: vertical;
+    }
+
+    .modal-btns {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .btn-modal {
+      background: transparent;
+      border: 1px solid var(--border-card);
+      color: var(--text);
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .btn-modal.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #041e49;
+      font-weight: 500;
+    }
+
+    /* Toast Notifications */
+    .toast-stack {
+      position: fixed;
+      top: 46px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 60;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border-card);
+      border-left: 2px solid var(--blue);
+      border-radius: 8px;
+      padding: 8px 10px;
+      min-width: 180px;
+      max-width: 260px;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+      pointer-events: auto;
+      cursor: pointer;
+      animation: toastIn 0.2s ease;
+    }
+
+    .toast.out {
+      animation: toastOut 0.2s ease forwards;
+    }
+
+    .toast-title {
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--text-bright);
+      margin-bottom: 2px;
+    }
+
+    .toast-body {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateX(12px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes toastOut {
+      from { opacity: 1; transform: translateX(0); }
+      to { opacity: 0; transform: translateX(12px); }
+    }
+
+    /* Unread Badge */
+    .unread-badge {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 5px;
+      border-radius: 8px;
+      background: var(--blue);
+      color: #041e49;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-right: 2px;
+    }
+
+    .unread-badge.visible {
+      display: inline-flex;
+    }
+
+    /* New Message Highlight */
+    .msg-wrap.fresh .msg-card {
+      animation: freshGlow 1.6s ease;
+    }
+
+    @keyframes freshGlow {
+      0% { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+      100% { border-color: var(--border); box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="toast-stack" id="toast-stack"></div>
+
+  <!-- Single Minimalist Header -->
+  <header class="top-bar">
+    <div class="peer-pill" title="Target Active Peer">
+      <span class="peer-dot" id="status-dot"></span>
+      <select id="peer-select" class="peer-select" onchange="updateSelectedPeer(this.value)">
+        <option value="all">Connected Peers (All)</option>
+      </select>
+    </div>
+
+    <div class="actions">
+      <span class="unread-badge" id="unread-badge" onclick="clearUnread()" title="New messages">0</span>
+
+      <!-- Share Session Icon -->
+      <button class="btn-icon" onclick="shareSession()" title="Share Current Session">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+        </svg>
+      </button>
+
+      <!-- Share Data Icon -->
+      <button class="btn-icon" onclick="openShareModal()" title="Share Data or Code Snippet">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+        </svg>
+      </button>
+
+      <!-- Refresh Icon -->
+      <button class="btn-icon" onclick="refreshState()" title="Refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Chat Messages Stream -->
+  <main class="chat-stream" id="chat-stream">
+    <div class="empty-state" id="empty-state">
+      <div>Peerer Mesh</div>
+      <div style="font-size: 11px; margin-top: 2px;">Share sessions, code, or messages with active peers.</div>
+    </div>
+    <div id="messages-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+  </main>
+
+  <!-- Minimal Floating Rounded Input -->
+  <div class="input-wrap">
+    <form class="input-box" onsubmit="handleSend(event)">
+      <input
+        type="text"
+        id="chat-input"
+        class="input-field"
+        placeholder="Message peer..."
+        autocomplete="off"
+        oninput="toggleSend(this)"
+      />
+      <button type="submit" id="send-btn" class="btn-send" disabled title="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="19" x2="12" y2="5"></line>
+          <polyline points="5 12 12 5 19 12"></polyline>
+        </svg>
+      </button>
+    </form>
+  </div>
+
+  <!-- Share Data Modal -->
+  <div id="data-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div style="font-size: 12px; font-weight: 500; color: var(--text-bright);">Share Data</div>
+      <input type="text" id="modal-title" placeholder="Title (e.g. diff, notes)" />
+      <textarea id="modal-data" placeholder="Paste data or code..."></textarea>
+      <div class="modal-btns">
+        <button class="btn-modal" onclick="closeShareModal()">Cancel</button>
+        <button class="btn-modal primary" onclick="submitShareData()">Share</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let appState = { local_node: {}, peers: [], inbox: [], outbox: [] };
+    let selectedTarget = 'all';
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const activeConvId = urlParams.get('conversationId') || '';
+
+    function toggleSend(el) {
+      document.getElementById('send-btn').disabled = !el.value.trim();
+    }
+
+    function updateSelectedPeer(val) {
+      selectedTarget = val;
+      const input = document.getElementById('chat-input');
+      input.placeholder = val === 'all' ? 'Message peers...' : `Message ${val}...`;
+      input.focus();
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Copied to clipboard!');
+      });
+    }
+
+    // --- Notification state ---
+    const seenInboxIds = new Set();
+    let firstLoad = true;
+    let unreadCount = 0;
+    let freshIds = new Set();
+    const baseTitle = document.title;
+
+    function showToast(title, body) {
+      const stack = document.getElementById('toast-stack');
+      const el = document.createElement('div');
+      el.className = 'toast';
+      el.innerHTML = `
+        <div class="toast-title">${escapeHtml(title)}</div>
+        <div class="toast-body">${escapeHtml(body)}</div>
+      `;
+      const dismiss = () => {
+        el.classList.add('out');
+        setTimeout(() => el.remove(), 200);
+      };
+      el.onclick = () => { dismiss(); clearUnread(); };
+      stack.appendChild(el);
+      setTimeout(dismiss, 5000);
+    }
+
+    function updateUnreadBadge() {
+      const badge = document.getElementById('unread-badge');
+      badge.innerText = unreadCount > 9 ? '9+' : String(unreadCount);
+      badge.classList.toggle('visible', unreadCount > 0);
+      document.title = unreadCount > 0 ? `(${unreadCount}) ${baseTitle}` : baseTitle;
+    }
+
+    function clearUnread() {
+      unreadCount = 0;
+      updateUnreadBadge();
+      const stream = document.getElementById('chat-stream');
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    function detectNewMessages(inbox) {
+      const fresh = [];
+      for (const m of inbox) {
+        if (!seenInboxIds.has(m.id)) {
+          seenInboxIds.add(m.id);
+          if (!firstLoad) fresh.push(m);
+        }
+      }
+      firstLoad = false;
+      if (fresh.length === 0) return;
+
+      freshIds = new Set(fresh.map(m => m.id));
+      unreadCount += fresh.length;
+      updateUnreadBadge();
+
+      // Show up to 3 toasts; collapse the rest
+      const shown = fresh.slice(-3);
+      for (const m of shown) {
+        showToast(`${m.sender}${m.title && m.title !== 'Peer Message' ? ' · ' + m.title : ''}`, m.content || '');
+      }
+      if (fresh.length > 3) {
+        showToast('Peerer', `+${fresh.length - 3} more new messages`);
+      }
+    }
+
+    // Mark as read when the user interacts with the panel
+    ['focus', 'click', 'keydown'].forEach(evt =>
+      window.addEventListener(evt, () => { if (unreadCount > 0) clearUnread(); }, { passive: true })
+    );
+
+    async function refreshState() {
+      try {
+        const res = await fetch('/api/v1/ui/state');
+        if (!res.ok) return;
+        appState = await res.json();
+        detectNewMessages(appState.inbox || []);
+        render();
+      } catch (err) {
+        console.warn('Sync error:', err);
+      }
+    }
+
+    function render() {
+      const local = appState.local_node || {};
+      const peers = appState.peers || [];
+      const inbox = appState.inbox || [];
+      const outbox = appState.outbox || [];
+
+      // Filter active peers excluding self
+      const activePeers = peers.filter(p => p.peer_id !== local.instance_name && p.status === 'online');
+
+      // Update Top Selector
+      const select = document.getElementById('peer-select');
+      const dot = document.getElementById('status-dot');
+      const currentVal = select.value;
+
+      if (activePeers.length === 0) {
+        select.innerHTML = '<option value="none">No other peers online</option>';
+        dot.className = 'peer-dot offline';
+      } else {
+        dot.className = 'peer-dot';
+        let opts = `<option value="all">Connected Peers (${activePeers.length})</option>`;
+        for (const p of activePeers) {
+          const label = p.display_name || p.peer_id;
+          opts += `<option value="${escapeHtml(p.peer_id)}">${escapeHtml(label)}</option>`;
+        }
+        select.innerHTML = opts;
+        if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+          select.value = currentVal;
+        }
+      }
+
+      // Render Messages
+      renderMessages(inbox, outbox);
+    }
+
+    function renderMessages(inbox, outbox) {
+      const list = [];
+      for (const m of inbox) {
+        list.push({
+          id: m.id,
+          dir: 'in',
+          sender: m.sender,
+          title: m.title,
+          content: m.content,
+          metadata: m.metadata || {},
+          time: m.received_at
+        });
+      }
+      for (const m of outbox) {
+        list.push({
+          id: m.id,
+          dir: 'out',
+          sender: 'You',
+          target: m.target_peer,
+          title: m.title,
+          content: m.content,
+          metadata: m.metadata || {},
+          time: m.sent_at
+        });
+      }
+
+      list.sort((a, b) => (a.time || 0) - (b.time || 0));
+
+      const emptyEl = document.getElementById('empty-state');
+      const listEl = document.getElementById('messages-list');
+      const stream = document.getElementById('chat-stream');
+
+      if (list.length === 0) {
+        emptyEl.style.display = 'block';
+        listEl.innerHTML = '';
+        return;
+      }
+      emptyEl.style.display = 'none';
+
+      let html = '';
+      for (const msg of list) {
+        const isSelf = msg.dir === 'out';
+        const senderName = isSelf ? `You → ${msg.target || 'Peers'}` : msg.sender;
+        const meta = msg.metadata || {};
+
+        html += `
+          <div class="msg-wrap ${isSelf ? 'self' : 'peer'} ${!isSelf && freshIds.has(msg.id) ? 'fresh' : ''}">
+            <div class="msg-meta">
+              <span>${escapeHtml(senderName)}</span>
+              <span>•</span>
+              <span>${formatTime(msg.time)}</span>
+            </div>
+            <div class="msg-card">
+              ${msg.title && msg.title !== 'Peer Message' && msg.title !== 'Peer Task Request' ? `
+                <div class="msg-title">${escapeHtml(msg.title)}</div>
+              ` : ''}
+
+              <!-- Shared Session Card -->
+              ${meta.type === 'session_share' || (msg.title && msg.title.toLowerCase().includes('shared session')) ? `
+                <div class="share-box">
+                  <div class="share-box-header">🔄 Shared Session</div>
+                  <div class="share-box-body">${escapeHtml(msg.content)}</div>
+                  ${meta.session_id ? `
+                    <button class="btn-action-pill" onclick="copyToClipboard('${escapeHtml(meta.session_id)}')">
+                      Copy ID
+                    </button>
+                  ` : ''}
+                </div>
+              ` : meta.type === 'data_share' ? `
+                <!-- Shared Data Card -->
+                <div class="share-box">
+                  <div class="share-box-header">📄 Shared Data</div>
+                  <div class="share-box-body">${escapeHtml(msg.content)}</div>
+                  <button class="btn-action-pill" onclick="copyToClipboard(\`${escapeHtml(msg.content)}\`)">
+                    Copy Data
+                  </button>
+                </div>
+              ` : `
+                <div>${escapeHtml(msg.content)}</div>
+              `}
+            </div>
+          </div>
+        `;
+      }
+      listEl.innerHTML = html;
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    async function dispatch(payload) {
+      const peers = appState.peers || [];
+      const localName = appState.local_node ? appState.local_node.instance_name : '';
+      const activePeers = peers.filter(p => p.peer_id !== localName && p.status === 'online');
+
+      const targets = (selectedTarget === 'all' || selectedTarget === 'none')
+        ? activePeers.map(p => p.peer_id)
+        : [selectedTarget];
+
+      if (targets.length === 0) {
+        alert('No active peer instances found to send to.');
+        return;
+      }
+
+      for (const t of targets) {
+        try {
+          await fetch('/api/v1/ui/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, peer: t })
+          });
+        } catch (e) {
+          console.error('Send error:', e);
+        }
+      }
+      refreshState();
+    }
+
+    function handleSend(e) {
+      if (e) e.preventDefault();
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      input.value = '';
+      toggleSend(input);
+
+      dispatch({
+        message: text,
+        title: 'Peer Message'
+      });
+    }
+
+    function shareSession() {
+      const convId = activeConvId || prompt('Conversation ID to share:', 'current-session');
+      if (!convId) return;
+
+      const note = prompt('Optional note for peers:', '');
+      const content = `Session ID: ${convId}\n${note ? `Note: ${note}` : ''}`;
+
+      dispatch({
+        title: `Shared Session: ${convId.slice(0, 8)}...`,
+        message: content,
+        metadata: {
+          type: 'session_share',
+          session_id: convId
+        }
+      });
+    }
+
+    function openShareModal() {
+      document.getElementById('data-modal').style.display = 'flex';
+      document.getElementById('modal-data').focus();
+    }
+
+    function closeShareModal() {
+      document.getElementById('data-modal').style.display = 'none';
+      document.getElementById('modal-data').value = '';
+      document.getElementById('modal-title').value = '';
+    }
+
+    function submitShareData() {
+      const data = document.getElementById('modal-data').value.trim();
+      const title = document.getElementById('modal-title').value.trim() || 'Shared Data';
+      if (!data) return;
+
+      closeShareModal();
+      dispatch({
+        title: title,
+        message: data,
+        metadata: {
+          type: 'data_share'
+        }
+      });
+    }
+
+    // Polling loop
+    refreshState();
+    setInterval(refreshState, 3000);
+  </script>
+</body>
+</html>

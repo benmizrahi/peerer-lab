@@ -42,7 +42,18 @@ def load_config() -> Dict[str, Any]:
                 return json.load(f)
         except Exception:
             pass
-    return {}
+RUNTIME_PATH = CONFIG_PATH.parent / "runtime.json"
+
+
+def get_runtime_url() -> Optional[str]:
+    if RUNTIME_PATH.exists():
+        try:
+            with open(RUNTIME_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return f"http://{data.get('host', '127.0.0.1')}:{data.get('port')}"
+        except Exception:
+            pass
+    return None
 
 
 def resolve_peer_endpoint(target: str) -> Tuple[str, str, bool]:
@@ -64,7 +75,13 @@ def resolve_peer_endpoint(target: str) -> Tuple[str, str, bool]:
                 peers = data.get("peers", {})
                 if target in peers:
                     p = peers[target]
-                    return p.get("url", "").rstrip("/"), p.get("token", ""), False
+                    url = p.get("url", "").rstrip("/")
+                    token = p.get("token", "")
+                    if target == "local-node" or url == "http://127.0.0.1:8950":
+                        runtime_url = get_runtime_url()
+                        if runtime_url:
+                            url = runtime_url
+                    return url, token, False
         except Exception:
             pass
 
@@ -88,12 +105,13 @@ def send_message(
     sender: str = "antigravity-peer",
     file: Optional[str] = None,
     token: Optional[str] = None,
-    timeout: int = 15
+    timeout: int = 15,
+    metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     base_url, peer_token, is_broker = resolve_peer_endpoint(peer)
     auth_token = token or os.getenv("PEER_AUTH_TOKEN") or peer_token or "antigravity-peer-secret-token"
 
-    metadata: Dict[str, Any] = {}
+    merged_metadata: Dict[str, Any] = dict(metadata or {})
     content = message
 
     if file:
@@ -102,7 +120,7 @@ def send_message(
             return {"status": "error", "error": f"Attached file does not exist: {file}"}
         try:
             file_text = file_path.read_text(encoding="utf-8", errors="replace")
-            metadata["attached_file"] = {
+            merged_metadata["attached_file"] = {
                 "filename": file_path.name,
                 "path": str(file_path),
                 "size_bytes": file_path.stat().st_size
@@ -115,7 +133,7 @@ def send_message(
         "sender": sender,
         "content": content,
         "title": title or "Peer Task Request",
-        "metadata": metadata
+        "metadata": merged_metadata
     }
     if conversation_id:
         payload["conversation_id"] = conversation_id

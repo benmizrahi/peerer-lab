@@ -30,6 +30,18 @@ def get_ssl_context() -> ssl.SSLContext:
 
 REGISTRY_PATH = Path(__file__).parent / "peers.json"
 
+RUNTIME_PATH = Path(__file__).resolve().parent.parent.parent.parent / "sidecars" / "peerer" / "runtime.json"
+
+def get_runtime_url():
+    if RUNTIME_PATH.exists():
+        try:
+            with open(RUNTIME_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return f"http://{data.get('host', '127.0.0.1')}:{data.get('port')}"
+        except Exception:
+            pass
+    return None
+
 def load_registry() -> Dict[str, Any]:
     if REGISTRY_PATH.exists():
         try:
@@ -69,15 +81,25 @@ def cmd_list(args):
     for name, info in peers.items():
         url = info.get("url", "")
         desc = info.get("description", "")
-        status_info = ping_url(url)
+        effective_url = url
+        if name == "local-node" or url == "http://127.0.0.1:8950":
+            runtime_url = get_runtime_url()
+            if runtime_url:
+                effective_url = runtime_url
+        status_info = ping_url(effective_url)
         status = "ONLINE" if status_info.get("reachable") else "OFFLINE"
-        print(f"{name:<20} {url:<30} {status:<15} {desc}")
+        print(f"{name:<20} {effective_url:<30} {status:<15} {desc}")
 
 def cmd_ping(args):
     reg = load_registry()
     url = args.target
     if url in reg.get("peers", {}):
-        url = reg["peers"][url].get("url", "")
+        peer_name = url
+        url = reg["peers"][peer_name].get("url", "")
+        if peer_name == "local-node" or url == "http://127.0.0.1:8950":
+            runtime_url = get_runtime_url()
+            if runtime_url:
+                url = runtime_url
 
     result = ping_url(url)
     print(json.dumps(result, indent=2))

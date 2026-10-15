@@ -69,6 +69,32 @@ peerer/
 
 ## Getting Started
 
+### 0. Install (one line)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/benmizrahi/peerer-lab/main/peerer-plugin/install.sh | bash
+```
+
+The installer clones the repo to `~/.peerer`, prompts for an instance name and
+(optional) broker URL/token, generates a `config.json` with a random auth token,
+links the plugin + skill + `peerer` CLI into Antigravity, and starts the sidecar.
+Re-running it upgrades in place and **never overwrites an existing `config.json`**.
+
+Non-interactive / scripted install:
+
+```bash
+PEERER_NONINTERACTIVE=1 \
+PEERER_INSTANCE_NAME=my-laptop \
+PEERER_BROKER_URL=https://your-broker.a.run.app \
+PEERER_BROKER_TOKEN=... \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/benmizrahi/peerer-lab/main/peerer-plugin/install.sh)"
+```
+
+From a local checkout: `./install.sh`
+
+**Upgrade:** `git -C ~/.peerer pull && ~/.peerer/peerer-plugin/install.sh`
+**Uninstall:** `rm -rf ~/.gemini/config/plugins/peerer ~/.gemini/config/skills/peerer ~/.local/bin/peerer ~/.peerer`
+
 ### 1. Configure Peerer
 Edit `sidecars/peerer/config.json`:
 ```json
@@ -126,6 +152,17 @@ To run or test it standalone via the CLI:
 ```bash
 ./bin/peerer inbox
 ```
+
+---
+
+## Embedded Sidecar Web UI
+
+Peerer comes with an integrated Web UI dashboard running directly inside Antigravity's Auxiliary Pane:
+
+- **Live Peer Mesh View**: Visual topology of connected peers, heartbeat countdowns, and ping latency.
+- **Activity & Task Stream**: Real-time bidirectional log of incoming tasks dispatched to `agentapi` and outgoing messages.
+- **Task Delegation Console**: Directly select an active peer, customize title, prompt, and model tier (`flash`, `pro`, `inherit`), and dispatch tasks with one click.
+- **Configuration**: Managed in `sidecars/peerer/sidecar.json` (`has_web_ui: true`, `ui_config` entrypoint set to `SIDECAR_UI_ENTRYPOINT_AUX_PANE`).
 
 ---
 

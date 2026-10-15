@@ -48,7 +48,7 @@ def cmd_daemon(args):
 
 def cmd_inbox(args):
     import urllib.request
-    url, token = send.resolve_peer_endpoint(args.peer or "local-node")
+    url, token, _ = send.resolve_peer_endpoint(args.peer or "local-node")
     token = args.token or os.getenv("PEER_AUTH_TOKEN") or token or "antigravity-peer-secret-token"
     target = f"{url}/api/v1/inbox"
     req = urllib.request.Request(target, headers={"Authorization": f"Bearer {token}"})
@@ -62,7 +62,7 @@ def cmd_inbox(args):
 
 def cmd_health(args):
     import urllib.request
-    url, _ = send.resolve_peer_endpoint(args.peer or "local-node")
+    url, _, _ = send.resolve_peer_endpoint(args.peer or "local-node")
     target = f"{url}/health"
     try:
         with urllib.request.urlopen(target, timeout=5, context=send.get_ssl_context()) as resp:

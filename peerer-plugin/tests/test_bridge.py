@@ -123,5 +123,29 @@ class TestPeererBridge(unittest.TestCase):
         self.assertEqual(code, 202)
         self.assertEqual(body["target"], "conv-1234-abcd")
 
+    def test_web_dashboard_html(self):
+        url = f"http://{TEST_HOST}:{TEST_PORT}/"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            self.assertEqual(resp.getcode(), 200)
+            self.assertIn("text/html", resp.headers.get("Content-Type", ""))
+            html = resp.read().decode("utf-8")
+            self.assertIn("Peerer Mesh", html)
+            self.assertIn("Connected Peers", html)
+
+    def test_ui_state(self):
+        code, body = self._request("GET", "/api/v1/ui/state")
+        self.assertEqual(code, 200)
+        self.assertIn("local_node", body)
+        self.assertIn("peers", body)
+        self.assertIn("inbox", body)
+        self.assertIn("outbox", body)
+        self.assertTrue(len(body["local_node"]["instance_name"]) > 0)
+
+    def test_ui_ping(self):
+        code, body = self._request("POST", "/api/v1/ui/ping", data={"target": "non-existent-peer"})
+        self.assertEqual(code, 200)
+        self.assertFalse(body.get("reachable"))
+
 if __name__ == "__main__":
     unittest.main()
