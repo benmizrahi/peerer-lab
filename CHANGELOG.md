@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: 
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-15
+
 ### Added
 - **View session in the panel.** Received sessions open in a full-pane viewer: the transcript (`SESSION.md`) rendered as markdown with user/agent turns, tabs for every artifact (markdown, text, images), and *Open externally*. Cards also show a 3-line preview of the conversation. No agent (or quota) needed to read what was shared.
 - `GET /api/v1/ui/file` (sandboxed to `~/Peerer Shared`).
@@ -68,9 +70,10 @@ First public release.
 - Broker and peer tokens are stored only in the git-ignored `config.json`; the settings API never returns a token in full.
 - Settings endpoint accepts only user-facing keys (`display_name`, `instance_name`, `broker_url`, `broker_token`, `notifications`).
 
-[Unreleased]: https://github.com/benmizrahi/peerer-lab/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/benmizrahi/peerer-lab/compare/v1.2.1...HEAD
 [1.0.0]: https://github.com/benmizrahi/peerer-lab/releases/tag/v1.0.0
 [1.1.0]: https://github.com/benmizrahi/peerer-lab/compare/v1.0.0...v1.1.0
 [1.1.1]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.0...v1.1.1
 [1.1.2]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.1...v1.1.2
 [1.2.0]: https://github.com/benmizrahi/peerer-lab/compare/v1.1.2...v1.2.0
+[1.2.1]: https://github.com/benmizrahi/peerer-lab/compare/v1.2.0...v1.2.1
