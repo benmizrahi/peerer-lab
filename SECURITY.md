@@ -4,6 +4,8 @@
 
 Please **do not** open a public issue for security problems. Email **benmizrahi@google.com** with a description and reproduction steps. You'll get an acknowledgement within a few days.
 
+> This is a demonstration project, not a Google product, and is **not eligible for the Google Open Source Software Vulnerability Rewards Program**. See the disclaimer in the [README](README.md).
+
 ## Threat model in one paragraph
 
 Peerer lets another person's Antigravity start a conversation on your machine. The trust boundary is the **broker token** (shared by everyone on a broker) and, for direct LAN mode, the per-daemon **`auth_token`**. Anyone holding a valid token can send you a message that becomes an agent prompt. Treat broker tokens like you'd treat a shared Slack workspace invite: only hand them to people you'd let message you.

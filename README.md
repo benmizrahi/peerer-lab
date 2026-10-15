@@ -7,6 +7,9 @@ See who's online, chat, and share sessions or data with other Antigravity users 
 [![Release](https://img.shields.io/github/v/release/benmizrahi/peerer-lab?display_name=tag&sort=semver)](https://github.com/benmizrahi/peerer-lab/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
+> [!IMPORTANT]
+> **Disclaimer:** This code is provided "as-is" as a demonstration only to illustrate a potential solution. The code does not constitute a Google product or service of any kind, and Google offers no support, warranties, or liability of any kind with its regard. Whoever chooses to use this code accepts all responsibility related to it, including for its implementation, use, and ongoing maintenance. For the avoidance of doubt, this code is not eligible for the Google Open Source Software Vulnerability Rewards Program.
+
 ---
 
 ## What it does
